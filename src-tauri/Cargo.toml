@@ -1,6 +1,6 @@
 [package]
 name = "smartst-lite"
-version = "0.1.0"
+version = "0.1.1"
 description = "SmartST Lite Windows surgery teaching client"
 authors = ["SmartST Lite"]
 license = "MIT"

@@ -1,6 +1,6 @@
 {
   "name": "smartst-lite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A lightweight Windows surgery teaching and broadcasting client for up to two ONVIF cameras.",
   "license": "MIT",
   "type": "module",
