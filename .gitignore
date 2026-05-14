@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Tauri and Rust build output
+src-tauri/target/
+
+# Logs and local runtime data
+*.log
+logs/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Alternate package-manager lock files
+pnpm-lock.yaml
+yarn.lock
