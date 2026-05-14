@@ -1,12 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use get_if_addrs::{get_if_addrs, IfAddr};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::Write,
-    net::{SocketAddr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -15,6 +16,7 @@ const APP_DIR_NAME: &str = "SmartST Lite";
 const CONFIG_FILE_NAME: &str = "config.json";
 const LOG_FILE_NAME: &str = "smartst-lite.log";
 const WS_DISCOVERY_ADDRESS: &str = "239.255.255.250:3702";
+const WS_DISCOVERY_PORT: u16 = 3702;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +29,12 @@ struct DiscoveredOnvifCamera {
     scopes: Vec<String>,
     source_address: String,
     discovered_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct DiscoveryInterface {
+    bind_ip: Option<Ipv4Addr>,
+    broadcast_ip: Option<Ipv4Addr>,
 }
 
 #[tauri::command]
@@ -97,48 +105,61 @@ fn append_log(entry: Value) -> Result<(), String> {
 
 #[tauri::command]
 fn discover_onvif_cameras() -> Result<Vec<DiscoveredOnvifCamera>, String> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
-        .map_err(|error| format!("Failed to bind UDP socket for ONVIF discovery: {error}"))?;
-    socket
-        .set_read_timeout(Some(Duration::from_millis(350)))
-        .map_err(|error| format!("Failed to configure ONVIF discovery timeout: {error}"))?;
-    let _ = socket.set_multicast_loop_v4(false);
-    let _ = socket.set_multicast_ttl_v4(4);
+    let interfaces = discovery_interfaces();
+    let targets = discovery_targets(&interfaces);
+    let probes = build_ws_discovery_probes();
+    let sockets = discovery_sockets(&interfaces);
 
-    let probe = build_ws_discovery_probe();
-    for _ in 0..2 {
-        socket
-            .send_to(probe.as_bytes(), WS_DISCOVERY_ADDRESS)
-            .map_err(|error| format!("Failed to send ONVIF discovery probe: {error}"))?;
-        std::thread::sleep(Duration::from_millis(120));
+    if sockets.is_empty() {
+        return Err("未能打开 UDP 探测端口。请检查安全软件或防火墙设置。".to_string());
+    }
+
+    for socket in &sockets {
+        for target in &targets {
+            for probe in &probes {
+                for _ in 0..2 {
+                    let _ = socket.send_to(probe.as_bytes(), target);
+                }
+            }
+        }
     }
 
     let started = Instant::now();
-    let timeout = Duration::from_millis(3500);
+    let timeout = Duration::from_millis(5200);
     let mut buffer = [0_u8; 65_535];
     let mut discovered: HashMap<String, DiscoveredOnvifCamera> = HashMap::new();
 
     while started.elapsed() < timeout {
-        match socket.recv_from(&mut buffer) {
-            Ok((length, source)) => {
-                let response = String::from_utf8_lossy(&buffer[..length]);
-                for camera in parse_onvif_probe_response(&response, source) {
-                    discovered.entry(camera.xaddr.clone()).or_insert(camera);
+        let mut received_any = false;
+
+        for socket in &sockets {
+            loop {
+                match socket.recv_from(&mut buffer) {
+                    Ok((length, source)) => {
+                        received_any = true;
+                        let response = String::from_utf8_lossy(&buffer[..length]);
+                        for camera in parse_onvif_probe_response(&response, source) {
+                            let key = format!("{}:{}", camera.ip_address, camera.onvif_port);
+                            discovered.entry(key).or_insert(camera);
+                        }
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        break;
+                    }
+                    Err(_) => {
+                        break;
+                    }
                 }
             }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                continue;
-            }
-            Err(error) => {
-                return Err(format!(
-                    "Failed to receive ONVIF discovery response: {error}"
-                ));
-            }
+        }
+
+        if !received_any {
+            std::thread::sleep(Duration::from_millis(30));
         }
     }
 
@@ -151,6 +172,87 @@ fn discover_onvif_cameras() -> Result<Vec<DiscoveredOnvifCamera>, String> {
     });
 
     Ok(cameras)
+}
+
+fn discovery_interfaces() -> Vec<DiscoveryInterface> {
+    let mut interfaces = vec![DiscoveryInterface {
+        bind_ip: None,
+        broadcast_ip: Some(Ipv4Addr::new(255, 255, 255, 255)),
+    }];
+
+    if let Ok(system_interfaces) = get_if_addrs() {
+        for interface in system_interfaces {
+            let IfAddr::V4(v4_addr) = interface.addr else {
+                continue;
+            };
+            let ip = v4_addr.ip;
+
+            if ip.is_loopback() || ip.is_unspecified() {
+                continue;
+            }
+
+            interfaces.push(DiscoveryInterface {
+                bind_ip: Some(ip),
+                broadcast_ip: Some(ipv4_broadcast(ip, v4_addr.netmask)),
+            });
+        }
+    }
+
+    interfaces
+}
+
+fn discovery_targets(interfaces: &[DiscoveryInterface]) -> Vec<SocketAddr> {
+    let mut targets = vec![
+        WS_DISCOVERY_ADDRESS
+            .parse::<SocketAddr>()
+            .expect("valid WS-Discovery multicast address"),
+        SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+            WS_DISCOVERY_PORT,
+        ),
+    ];
+    let mut seen = targets.iter().copied().collect::<HashSet<_>>();
+
+    for interface in interfaces {
+        if let Some(broadcast_ip) = interface.broadcast_ip {
+            let target = SocketAddr::new(IpAddr::V4(broadcast_ip), WS_DISCOVERY_PORT);
+            if seen.insert(target) {
+                targets.push(target);
+            }
+        }
+    }
+
+    targets
+}
+
+fn discovery_sockets(interfaces: &[DiscoveryInterface]) -> Vec<UdpSocket> {
+    let mut sockets = Vec::new();
+    let mut seen_bindings = HashSet::new();
+
+    for interface in interfaces {
+        let bind_ip = interface.bind_ip.unwrap_or(Ipv4Addr::UNSPECIFIED);
+
+        if !seen_bindings.insert(bind_ip) {
+            continue;
+        }
+
+        if let Ok(socket) = UdpSocket::bind(SocketAddr::new(IpAddr::V4(bind_ip), 0)) {
+            let _ = socket.set_nonblocking(true);
+            let _ = socket.set_broadcast(true);
+            let _ = socket.set_multicast_loop_v4(false);
+            let _ = socket.set_multicast_ttl_v4(4);
+            sockets.push(socket);
+        }
+    }
+
+    sockets
+}
+
+fn ipv4_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
+    let ip_value = u32::from(ip);
+    let mask_value = u32::from(netmask);
+
+    Ipv4Addr::from(ip_value | !mask_value)
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -170,14 +272,15 @@ fn app_base_dir() -> Result<PathBuf, String> {
     Ok(base.join(APP_DIR_NAME))
 }
 
-fn build_ws_discovery_probe() -> String {
+fn build_ws_discovery_probes() -> Vec<String> {
     let message_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
 
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+    vec![
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
             xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing"
             xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"
@@ -193,7 +296,41 @@ fn build_ws_discovery_probe() -> String {
     </d:Probe>
   </e:Body>
 </e:Envelope>"#
-    )
+        ),
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+            xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+  <e:Header>
+    <a:MessageID>uuid:smartst-lite-generic-{message_id}</a:MessageID>
+    <a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To>
+    <a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</a:Action>
+  </e:Header>
+  <e:Body>
+    <d:Probe />
+  </e:Body>
+</e:Envelope>"#
+        ),
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:a="http://www.w3.org/2005/08/addressing"
+            xmlns:d="http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01"
+            xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+  <s:Header>
+    <a:MessageID>urn:uuid:smartst-lite-oasis-{message_id}</a:MessageID>
+    <a:To>urn:docs-oasis-open-org:ws-dd:ns:discovery:2009:01</a:To>
+    <a:Action>http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01/Probe</a:Action>
+  </s:Header>
+  <s:Body>
+    <d:Probe>
+      <d:Types>dn:NetworkVideoTransmitter</d:Types>
+    </d:Probe>
+  </s:Body>
+</s:Envelope>"#
+        ),
+    ]
 }
 
 fn parse_onvif_probe_response(xml: &str, source: SocketAddr) -> Vec<DiscoveredOnvifCamera> {
@@ -207,7 +344,7 @@ fn parse_onvif_probe_response(xml: &str, source: SocketAddr) -> Vec<DiscoveredOn
         })
         .collect::<Vec<_>>();
 
-    extract_xml_values(xml, "XAddrs")
+    let mut xaddr_values = extract_xml_values(xml, "XAddrs")
         .into_iter()
         .flat_map(|xaddr_text| {
             xaddr_text
@@ -216,8 +353,20 @@ fn parse_onvif_probe_response(xml: &str, source: SocketAddr) -> Vec<DiscoveredOn
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         })
+        .collect::<Vec<_>>();
+
+    if xaddr_values.is_empty() {
+        xaddr_values.push(format!(
+            "http://{}:{}/onvif/device_service",
+            source.ip(),
+            80
+        ));
+    }
+
+    xaddr_values
+        .into_iter()
         .filter_map(|xaddr| {
-            let (ip_address, onvif_port) = parse_xaddr_host_port(&xaddr)?;
+            let (ip_address, onvif_port) = parse_xaddr_host_port(&xaddr, source)?;
             let name = camera_name_from_scopes(&scopes)
                 .unwrap_or_else(|| format!("ONVIF 摄像机 {ip_address}"));
             let discovered_at = SystemTime::now()
@@ -289,7 +438,7 @@ fn extract_xml_values(xml: &str, local_name: &str) -> Vec<String> {
     values
 }
 
-fn parse_xaddr_host_port(xaddr: &str) -> Option<(String, String)> {
+fn parse_xaddr_host_port(xaddr: &str, source: SocketAddr) -> Option<(String, String)> {
     let (default_port, rest) = if let Some(rest) = xaddr.strip_prefix("http://") {
         ("80", rest)
     } else if let Some(rest) = xaddr.strip_prefix("https://") {
@@ -317,7 +466,13 @@ fn parse_xaddr_host_port(xaddr: &str) -> Option<(String, String)> {
         return None;
     }
 
-    Some((host, port))
+    let ip_address = if host.parse::<IpAddr>().is_ok() {
+        host
+    } else {
+        source.ip().to_string()
+    };
+
+    Some((ip_address, port))
 }
 
 fn camera_name_from_scopes(scopes: &[String]) -> Option<String> {
