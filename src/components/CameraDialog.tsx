@@ -12,6 +12,7 @@ import {
 interface CameraDialogProps {
   camera?: CameraConfig;
   cameraIndex: number;
+  initialDraft?: Partial<CameraDraft>;
   onClose: () => void;
   onSave: (camera: CameraConfig) => void;
 }
@@ -28,6 +29,7 @@ const emptyDraft: CameraDraft = {
 export function CameraDialog({
   camera,
   cameraIndex,
+  initialDraft,
   onClose,
   onSave,
 }: CameraDialogProps) {
@@ -36,7 +38,8 @@ export function CameraDialog({
 
   useEffect(() => {
     if (!camera) {
-      setDraft(emptyDraft);
+      setDraft({ ...emptyDraft, ...(initialDraft ?? {}) });
+      setError("");
       return;
     }
 
@@ -48,7 +51,8 @@ export function CameraDialog({
       password: camera.password,
       rtspUrl: camera.rtspUrl,
     });
-  }, [camera]);
+    setError("");
+  }, [camera, initialDraft]);
 
   function updateField<K extends keyof CameraDraft>(
     key: K,

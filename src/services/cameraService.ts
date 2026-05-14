@@ -1,4 +1,6 @@
-import type { CameraConfig } from "../domain/types";
+import { invoke } from "@tauri-apps/api/core";
+import type { CameraConfig, DiscoveredOnvifCamera } from "../domain/types";
+import { isTauriRuntime } from "./configService";
 
 export const MAX_CAMERAS = 2;
 
@@ -9,6 +11,27 @@ export interface CameraDraft {
   username: string;
   password: string;
   rtspUrl: string;
+}
+
+export async function discoverOnvifCameras(): Promise<DiscoveredOnvifCamera[]> {
+  if (!isTauriRuntime()) {
+    throw new Error("自动发现需要在 SmartST Lite Windows 桌面客户端中运行。");
+  }
+
+  return invoke<DiscoveredOnvifCamera[]>("discover_onvif_cameras");
+}
+
+export function draftFromDiscoveredCamera(
+  camera: DiscoveredOnvifCamera,
+): CameraDraft {
+  return {
+    name: camera.name,
+    ipAddress: camera.ipAddress,
+    onvifPort: camera.onvifPort || "80",
+    username: "",
+    password: "",
+    rtspUrl: "",
+  };
 }
 
 export function createCameraConfig(

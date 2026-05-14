@@ -26,6 +26,17 @@ export interface CameraConfig {
   updatedAt: string;
 }
 
+export interface DiscoveredOnvifCamera {
+  id: string;
+  name: string;
+  ipAddress: string;
+  onvifPort: string;
+  xaddr: string;
+  scopes: string[];
+  sourceAddress: string;
+  discoveredAt: string;
+}
+
 export interface AppSettings {
   serverUrl: string;
   organizationName: string;

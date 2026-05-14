@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  AlertCircle,
   Mic,
   Pencil,
   PhoneCall,
@@ -9,8 +10,18 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import type { AppConfig, CameraConfig, RoomSession } from "../domain/types";
-import { MAX_CAMERAS } from "../services/cameraService";
+import type {
+  AppConfig,
+  CameraConfig,
+  DiscoveredOnvifCamera,
+  RoomSession,
+} from "../domain/types";
+import {
+  type CameraDraft,
+  MAX_CAMERAS,
+  discoverOnvifCameras,
+  draftFromDiscoveredCamera,
+} from "../services/cameraService";
 import { createLocalRoom, markCalling } from "../services/realtimeService";
 import { CameraDialog } from "./CameraDialog";
 import { VideoPane } from "./VideoPane";
@@ -31,7 +42,16 @@ export function InitiatorPage({
   onLog,
 }: InitiatorPageProps) {
   const [dialogCamera, setDialogCamera] = useState<CameraConfig | undefined>();
+  const [initialDraft, setInitialDraft] = useState<
+    Partial<CameraDraft> | undefined
+  >();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveredCameras, setDiscoveredCameras] = useState<
+    DiscoveredOnvifCamera[]
+  >([]);
+  const [discoveryMessage, setDiscoveryMessage] = useState("");
+  const [discoveryError, setDiscoveryError] = useState("");
 
   const primaryCamera = useMemo(
     () => config.cameras.find((camera) => camera.role === "primary"),
@@ -41,6 +61,16 @@ export function InitiatorPage({
     () => config.cameras.find((camera) => camera.role === "secondary"),
     [config.cameras],
   );
+  const configuredIpAddresses = useMemo(
+    () => new Set(config.cameras.map((camera) => camera.ipAddress)),
+    [config.cameras],
+  );
+
+  function openAddCamera(draft?: Partial<CameraDraft>) {
+    setDialogCamera(undefined);
+    setInitialDraft(draft);
+    setIsDialogOpen(true);
+  }
 
   function handleSaveCamera(camera: CameraConfig) {
     onConfigChange((current) => {
@@ -56,10 +86,48 @@ export function InitiatorPage({
     });
     setIsDialogOpen(false);
     setDialogCamera(undefined);
+    setInitialDraft(undefined);
     onLog("info", "Camera configuration saved", {
       cameraName: camera.name,
       ipAddress: camera.ipAddress,
     });
+  }
+
+  async function handleDiscoverCameras() {
+    if (config.cameras.length >= MAX_CAMERAS) {
+      setDiscoveryError("当前已达到 2 路摄像机上限，无法继续添加。");
+      return;
+    }
+
+    setIsDiscovering(true);
+    setDiscoveryError("");
+    setDiscoveryMessage("正在扫描局域网 ONVIF 摄像机，请稍候...");
+
+    try {
+      const cameras = await discoverOnvifCameras();
+      setDiscoveredCameras(cameras);
+      setDiscoveryMessage(
+        cameras.length > 0
+          ? `发现 ${cameras.length} 台 ONVIF 设备。请选择设备后补充用户名和密码。`
+          : "没有发现 ONVIF 摄像机。请确认摄像机与本机在同一局域网，且 Windows 防火墙允许 UDP 3702。"
+      );
+      onLog("info", "ONVIF discovery completed", {
+        count: cameras.length,
+        cameras: cameras.map((camera) => ({
+          name: camera.name,
+          ipAddress: camera.ipAddress,
+          xaddr: camera.xaddr,
+        })),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "ONVIF 自动发现失败。";
+      setDiscoveryError(message);
+      setDiscoveryMessage("");
+      onLog("error", "ONVIF discovery failed", { message });
+    } finally {
+      setIsDiscovering(false);
+    }
   }
 
   function removeCamera(cameraId: string) {
@@ -119,17 +187,24 @@ export function InitiatorPage({
           <h1>手术室转播控制台</h1>
         </div>
         <div className="header-actions">
-          <button className="secondary-button" disabled title="ONVIF 自动发现 TODO" type="button">
-            <RefreshCcw size={17} />
-            自动发现
+          <button
+            className="secondary-button"
+            disabled={isDiscovering || config.cameras.length >= MAX_CAMERAS}
+            onClick={handleDiscoverCameras}
+            title={
+              config.cameras.length >= MAX_CAMERAS
+                ? "已达到 2 路摄像机上限"
+                : "扫描局域网 ONVIF 摄像机"
+            }
+            type="button"
+          >
+            <RefreshCcw className={isDiscovering ? "spin" : ""} size={17} />
+            {isDiscovering ? "发现中" : "自动发现"}
           </button>
           <button
             className="primary-button"
             disabled={config.cameras.length >= MAX_CAMERAS}
-            onClick={() => {
-              setDialogCamera(undefined);
-              setIsDialogOpen(true);
-            }}
+            onClick={() => openAddCamera()}
             type="button"
           >
             <Plus size={17} />
@@ -198,6 +273,7 @@ export function InitiatorPage({
                     className="icon-button"
                     onClick={() => {
                       setDialogCamera(camera);
+                      setInitialDraft(undefined);
                       setIsDialogOpen(true);
                     }}
                     title="编辑摄像机"
@@ -217,6 +293,62 @@ export function InitiatorPage({
               </article>
             ))}
           </div>
+
+          {(isDiscovering ||
+            discoveryMessage ||
+            discoveryError ||
+            discoveredCameras.length > 0) && (
+            <div className="discovery-block">
+              <div className="section-heading compact">
+                <h2>自动发现结果</h2>
+                <span>{isDiscovering ? "扫描中" : `${discoveredCameras.length} 台`}</span>
+              </div>
+
+              {discoveryError && (
+                <div className="form-error">{discoveryError}</div>
+              )}
+              {discoveryMessage && (
+                <div className="discovery-message">
+                  <AlertCircle size={17} />
+                  <span>{discoveryMessage}</span>
+                </div>
+              )}
+
+              <div className="discovery-list">
+                {discoveredCameras.map((camera) => {
+                  const alreadyAdded = configuredIpAddresses.has(
+                    camera.ipAddress,
+                  );
+                  return (
+                    <article className="discovery-card" key={camera.id}>
+                      <div>
+                        <div className="discovery-title">
+                          <strong>{camera.name}</strong>
+                          {alreadyAdded && <span className="role-tag primary">已添加</span>}
+                        </div>
+                        <p>
+                          {camera.ipAddress}:{camera.onvifPort}
+                        </p>
+                        <code>{camera.xaddr}</code>
+                      </div>
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          alreadyAdded || config.cameras.length >= MAX_CAMERAS
+                        }
+                        onClick={() =>
+                          openAddCamera(draftFromDiscoveredCamera(camera))
+                        }
+                        type="button"
+                      >
+                        使用此设备
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="preview-grid">
@@ -240,9 +372,11 @@ export function InitiatorPage({
         <CameraDialog
           camera={dialogCamera}
           cameraIndex={config.cameras.length}
+          initialDraft={initialDraft}
           onClose={() => {
             setIsDialogOpen(false);
             setDialogCamera(undefined);
+            setInitialDraft(undefined);
           }}
           onSave={handleSaveCamera}
         />

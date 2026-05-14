@@ -500,6 +500,11 @@ p {
   margin-bottom: 14px;
 }
 
+.section-heading.compact {
+  margin-top: 16px;
+  margin-bottom: 10px;
+}
+
 .section-heading h2,
 .roadmap-teaser h2 {
   font-size: 18px;
@@ -512,12 +517,14 @@ p {
 }
 
 .camera-list,
-.recent-list {
+.recent-list,
+.discovery-list {
   display: grid;
   gap: 12px;
 }
 
-.camera-card {
+.camera-card,
+.discovery-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
@@ -525,6 +532,11 @@ p {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfeff;
+}
+
+.discovery-card {
+  align-items: center;
+  background: #f7fcfd;
 }
 
 .camera-title {
@@ -540,10 +552,54 @@ p {
   white-space: nowrap;
 }
 
-.camera-card p {
+.camera-card p,
+.discovery-card p {
   margin: 6px 0;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.discovery-block {
+  margin-top: 18px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.discovery-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.discovery-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discovery-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #cce4e8;
+  border-radius: 8px;
+  color: #245269;
+  background: #f2fbfb;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .role-tag,
