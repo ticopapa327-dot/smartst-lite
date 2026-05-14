@@ -1,21 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use get_if_addrs::{get_if_addrs, IfAddr};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha1::{Digest, Sha1};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
-    io::{Cursor, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    io::{Cursor, Read, Write},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 const APP_DIR_NAME: &str = "SmartST Lite";
 const CONFIG_FILE_NAME: &str = "config.json";
@@ -24,6 +30,7 @@ const WS_DISCOVERY_ADDRESS: &str = "239.255.255.250:3702";
 const WS_DISCOVERY_PORT: u16 = 3702;
 const PREVIEW_HTTP_PORT_START: u16 = 38180;
 const PREVIEW_HTTP_PORT_END: u16 = 38199;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +57,29 @@ struct RtspPreviewSession {
     playback_url: String,
     log_path: String,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RtspStreamResolution {
+    rtsp_url: String,
+    profile_token: String,
+    profile_name: String,
+    media_xaddr: String,
+    message: String,
+}
+
+#[derive(Debug, Clone)]
+struct OnvifProfile {
+    token: String,
+    name: String,
+}
+
+#[derive(Debug, Clone)]
+struct HttpTarget {
+    host: String,
+    port: u16,
+    path: String,
 }
 
 struct PreviewProcess {
@@ -133,6 +163,92 @@ fn append_log(entry: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn resolve_rtsp_stream_uri(
+    ip_address: String,
+    onvif_port: String,
+    username: String,
+    password: String,
+) -> Result<RtspStreamResolution, String> {
+    let ip_address = ip_address.trim();
+    if ip_address.is_empty() {
+        return Err("请输入摄像机 IP 地址。".to_string());
+    }
+
+    let port = onvif_port
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| "ONVIF 端口必须是数字。".to_string())?;
+    let username = username.trim().to_string();
+    let password = password.to_string();
+    let device_xaddr = format!("http://{ip_address}:{port}/onvif/device_service");
+
+    let capabilities = onvif_post(
+        &device_xaddr,
+        ip_address,
+        &soap_envelope(
+            r#"<tds:GetCapabilities>
+  <tds:Category>Media</tds:Category>
+</tds:GetCapabilities>"#,
+            &username,
+            &password,
+        )?,
+    )?;
+    let media_xaddr = extract_xml_values(&capabilities, "XAddr")
+        .into_iter()
+        .find(|value| value.to_ascii_lowercase().contains("/onvif"))
+        .unwrap_or_else(|| format!("http://{ip_address}:{port}/onvif/Media"));
+
+    let profiles_response = onvif_post(
+        &media_xaddr,
+        ip_address,
+        &soap_envelope("<trt:GetProfiles />", &username, &password)?,
+    )?;
+    let profiles = extract_onvif_profiles(&profiles_response);
+    let profile = choose_onvif_profile(&profiles).ok_or_else(|| {
+        "ONVIF 已连接，但未返回可用的视频 Profile；请检查摄像机 ONVIF/媒体服务设置。".to_string()
+    })?;
+
+    let stream_response = onvif_post(
+        &media_xaddr,
+        ip_address,
+        &soap_envelope(
+            &format!(
+                r#"<trt:GetStreamUri>
+  <trt:StreamSetup>
+    <tt:Stream>RTP-Unicast</tt:Stream>
+    <tt:Transport>
+      <tt:Protocol>RTSP</tt:Protocol>
+    </tt:Transport>
+  </trt:StreamSetup>
+  <trt:ProfileToken>{}</trt:ProfileToken>
+</trt:GetStreamUri>"#,
+                xml_escape(&profile.token)
+            ),
+            &username,
+            &password,
+        )?,
+    )?;
+    let raw_uri = extract_xml_values(&stream_response, "Uri")
+        .into_iter()
+        .find(|value| value.starts_with("rtsp://") || value.starts_with("rtsps://"))
+        .ok_or_else(|| "ONVIF 未返回 RTSP StreamUri。".to_string())?;
+    let rtsp_url = rtsp_url_with_credentials(&raw_uri, &username, &password);
+    let message = if rtsp_url == raw_uri {
+        "已通过 ONVIF GetStreamUri 获取 RTSP 地址。".to_string()
+    } else {
+        "已通过 ONVIF GetStreamUri 获取 RTSP 地址，并补入用户名密码用于 FFmpeg 预览。".to_string()
+    };
+
+    Ok(RtspStreamResolution {
+        rtsp_url,
+        profile_token: profile.token,
+        profile_name: profile.name,
+        media_xaddr,
+        message,
+    })
+}
+
+#[tauri::command]
 fn start_rtsp_preview(camera_id: String, rtsp_url: String) -> Result<RtspPreviewSession, String> {
     let rtsp_url = rtsp_url.trim().to_string();
     if !(rtsp_url.starts_with("rtsp://") || rtsp_url.starts_with("rtsps://")) {
@@ -162,7 +278,8 @@ fn start_rtsp_preview(camera_id: String, rtsp_url: String) -> Result<RtspPreview
     let _ = writeln!(log_file, "\n=== SmartST Lite RTSP preview start ===");
     let _ = writeln!(log_file, "rtsp_url={}", redact_rtsp_url(&rtsp_url));
 
-    let mut child = Command::new(&ffmpeg_path)
+    let mut command = Command::new(&ffmpeg_path);
+    command
         .current_dir(&preview_dir)
         .args([
             "-hide_banner",
@@ -205,7 +322,10 @@ fn start_rtsp_preview(camera_id: String, rtsp_url: String) -> Result<RtspPreview
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file));
+    apply_no_window(&mut command);
+
+    let mut child = command
         .spawn()
         .map_err(|error| format!("启动 FFmpeg 失败: {error}"))?;
 
@@ -414,6 +534,335 @@ fn ipv4_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
     Ipv4Addr::from(ip_value | !mask_value)
 }
 
+fn onvif_post(url: &str, fallback_host: &str, body: &str) -> Result<String, String> {
+    let target = parse_http_target(url)
+        .or_else(|| parse_http_target(&replace_http_host(url, fallback_host)))
+        .ok_or_else(|| format!("ONVIF 地址无效: {url}"))?;
+    let mut last_error = None;
+
+    for candidate in [
+        target.clone(),
+        HttpTarget {
+            host: fallback_host.to_string(),
+            port: target.port,
+            path: target.path.clone(),
+        },
+    ] {
+        match http_post(&candidate, body) {
+            Ok(response) => return Ok(response),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "ONVIF HTTP 请求失败。".to_string()))
+}
+
+fn http_post(target: &HttpTarget, body: &str) -> Result<String, String> {
+    let address = format!("{}:{}", target.host, target.port);
+    let socket_addr = address
+        .to_socket_addrs()
+        .map_err(|error| format!("解析 ONVIF 地址失败 {address}: {error}"))?
+        .next()
+        .ok_or_else(|| format!("无法解析 ONVIF 地址: {address}"))?;
+    let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
+        .map_err(|error| format!("连接 ONVIF 服务失败 {address}: {error}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    let request = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/soap+xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        target.path,
+        target.host,
+        body.as_bytes().len(),
+        body
+    );
+
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("发送 ONVIF 请求失败: {error}"))?;
+
+    let mut bytes = Vec::new();
+    stream
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("读取 ONVIF 响应失败: {error}"))?;
+    let response = String::from_utf8_lossy(&bytes).to_string();
+    let (header, body) = split_http_response(&response)?;
+    let status_code = header
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    if !(200..300).contains(&status_code) {
+        return Err(format!(
+            "ONVIF 请求返回 HTTP {status_code}；请确认用户名、密码和 ONVIF 端口。"
+        ));
+    }
+
+    if header
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        return Ok(decode_chunked_body(body).unwrap_or_else(|| body.to_string()));
+    }
+
+    Ok(body.to_string())
+}
+
+fn split_http_response(response: &str) -> Result<(&str, &str), String> {
+    response
+        .split_once("\r\n\r\n")
+        .or_else(|| response.split_once("\n\n"))
+        .ok_or_else(|| "ONVIF 响应不是有效 HTTP 格式。".to_string())
+}
+
+fn decode_chunked_body(body: &str) -> Option<String> {
+    let mut decoded = Vec::new();
+    let mut position = 0;
+    let bytes = body.as_bytes();
+
+    loop {
+        let line_end = body[position..].find('\n')? + position;
+        let size_text = body[position..line_end].trim();
+        let size = usize::from_str_radix(size_text.split(';').next()?.trim(), 16).ok()?;
+        position = line_end + 1;
+
+        if size == 0 {
+            break;
+        }
+
+        if position + size > bytes.len() {
+            return None;
+        }
+
+        decoded.extend_from_slice(&bytes[position..position + size]);
+        position += size;
+
+        if body[position..].starts_with("\r\n") {
+            position += 2;
+        } else if body[position..].starts_with('\n') {
+            position += 1;
+        }
+    }
+
+    Some(String::from_utf8_lossy(&decoded).to_string())
+}
+
+fn parse_http_target(url: &str) -> Option<HttpTarget> {
+    let rest = url.strip_prefix("http://")?;
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, "/".to_string()),
+    };
+    let authority = authority.split('@').last()?;
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        let host = authority[1..end].to_string();
+        let port = authority[end + 1..]
+            .strip_prefix(':')
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(80);
+        (host, port)
+    } else if let Some((host, port)) = authority.rsplit_once(':') {
+        (host.to_string(), port.parse::<u16>().ok()?)
+    } else {
+        (authority.to_string(), 80)
+    };
+
+    if host.is_empty() {
+        return None;
+    }
+
+    Some(HttpTarget { host, port, path })
+}
+
+fn replace_http_host(url: &str, fallback_host: &str) -> String {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return url.to_string();
+    };
+    let Some((authority, path)) = rest.split_once('/') else {
+        return format!("http://{fallback_host}");
+    };
+    let port = parse_http_target(url)
+        .map(|target| target.port)
+        .filter(|port| *port != 80)
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+
+    if authority.is_empty() {
+        format!("http://{fallback_host}/{path}")
+    } else {
+        format!("http://{fallback_host}{port}/{path}")
+    }
+}
+
+fn soap_envelope(body: &str, username: &str, password: &str) -> Result<String, String> {
+    let security = if username.trim().is_empty() {
+        String::new()
+    } else {
+        onvif_username_token(username, password)?
+    };
+
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:tds="http://www.onvif.org/ver10/device/wsdl"
+            xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
+            xmlns:tt="http://www.onvif.org/ver10/schema">
+  <s:Header>{security}</s:Header>
+  <s:Body>{body}</s:Body>
+</s:Envelope>"#
+    ))
+}
+
+fn onvif_username_token(username: &str, password: &str) -> Result<String, String> {
+    let created = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .map_err(|error| format!("生成 ONVIF 时间戳失败: {error}"))?;
+    let nonce_seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".to_string());
+    let nonce_raw = format!("smartst-lite-{nonce_seed}-{}", std::process::id());
+    let nonce = BASE64.encode(nonce_raw.as_bytes());
+
+    let mut hasher = Sha1::new();
+    hasher.update(nonce_raw.as_bytes());
+    hasher.update(created.as_bytes());
+    hasher.update(password.as_bytes());
+    let digest = BASE64.encode(hasher.finalize());
+
+    Ok(format!(
+        r#"<wsse:Security s:mustUnderstand="1"
+                 xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+                 xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+  <wsse:UsernameToken>
+    <wsse:Username>{}</wsse:Username>
+    <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{digest}</wsse:Password>
+    <wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{nonce}</wsse:Nonce>
+    <wsu:Created>{created}</wsu:Created>
+  </wsse:UsernameToken>
+</wsse:Security>"#,
+        xml_escape(username)
+    ))
+}
+
+fn extract_onvif_profiles(xml: &str) -> Vec<OnvifProfile> {
+    let mut profiles = Vec::new();
+    let mut position = 0;
+
+    while let Some(open_relative) = xml[position..].find('<') {
+        let open_start = position + open_relative;
+        let after_open = open_start + 1;
+
+        if xml[after_open..].starts_with('/') {
+            position = after_open;
+            continue;
+        }
+
+        let Some(open_end_relative) = xml[after_open..].find('>') else {
+            break;
+        };
+        let open_end = after_open + open_end_relative;
+        let raw_tag = xml[after_open..open_end].trim();
+        let tag_name = raw_tag.split_whitespace().next().unwrap_or_default();
+        let tag_local_name = tag_name.rsplit(':').next().unwrap_or(tag_name);
+
+        if !tag_local_name.eq_ignore_ascii_case("Profiles") {
+            position = open_end + 1;
+            continue;
+        }
+
+        let Some(token) = extract_xml_attribute(raw_tag, "token") else {
+            position = open_end + 1;
+            continue;
+        };
+        let close_tag = format!("</{tag_name}>");
+        let content_start = open_end + 1;
+        let Some(close_relative) = xml[content_start..].find(&close_tag) else {
+            position = content_start;
+            continue;
+        };
+        let content_end = content_start + close_relative;
+        let content = &xml[content_start..content_end];
+        let name = extract_xml_values(content, "Name")
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| token.clone());
+
+        profiles.push(OnvifProfile { token, name });
+        position = content_end + close_tag.len();
+    }
+
+    profiles
+}
+
+fn choose_onvif_profile(profiles: &[OnvifProfile]) -> Option<OnvifProfile> {
+    profiles
+        .iter()
+        .find(|profile| {
+            let text = format!("{} {}", profile.name, profile.token).to_ascii_lowercase();
+            text.contains("main") || text.contains("profile_1") || text.contains("profile1")
+        })
+        .or_else(|| profiles.first())
+        .cloned()
+}
+
+fn extract_xml_attribute(tag: &str, attribute: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let marker = format!("{attribute}={quote}");
+        let Some(start) = tag.find(&marker).map(|start| start + marker.len()) else {
+            continue;
+        };
+        let Some(end) = tag[start..].find(quote).map(|end| end + start) else {
+            continue;
+        };
+        return Some(xml_unescape(&tag[start..end]));
+    }
+
+    None
+}
+
+fn rtsp_url_with_credentials(rtsp_url: &str, username: &str, password: &str) -> String {
+    if username.trim().is_empty() || rtsp_url.contains('@') {
+        return rtsp_url.to_string();
+    }
+
+    let Some((scheme, rest)) = rtsp_url.split_once("://") else {
+        return rtsp_url.to_string();
+    };
+    let username = percent_encode_url_part(username.trim());
+    let password = percent_encode_url_part(password);
+    let auth = if password.is_empty() {
+        username
+    } else {
+        format!("{username}:{password}")
+    };
+
+    format!("{scheme}://{auth}@{rest}")
+}
+
+fn percent_encode_url_part(input: &str) -> String {
+    input
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
+fn xml_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 fn ensure_preview_server() -> Result<u16, String> {
     let mut runtime = PREVIEW_RUNTIME
         .lock()
@@ -565,6 +1014,10 @@ fn find_ffmpeg_executable() -> Result<PathBuf, String> {
         }
     }
 
+    if let Some(path) = medvision_runtime_binary("ffmpeg.exe") {
+        return Ok(path);
+    }
+
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let bundled = exe_dir.join("ffmpeg.exe");
@@ -591,12 +1044,61 @@ fn find_ffmpeg_executable() -> Result<PathBuf, String> {
     )
 }
 
+fn medvision_runtime_binary(file_name: &str) -> Option<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(root) = std::env::var_os("MEDVISION_RUNTIME_DIR") {
+        roots.push(PathBuf::from(root));
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(root) = std::env::var_os("ProgramW6432") {
+            roots.push(PathBuf::from(root).join("MedVision").join("Runtime"));
+        }
+        if let Some(root) = std::env::var_os("ProgramFiles") {
+            let root = PathBuf::from(root).join("MedVision").join("Runtime");
+            if !roots.iter().any(|existing| existing == &root) {
+                roots.push(root);
+            }
+        }
+        if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+            roots.push(
+                PathBuf::from(root)
+                    .join("Programs")
+                    .join("MedVision")
+                    .join("Runtime"),
+            );
+        }
+    }
+
+    roots
+        .into_iter()
+        .map(|root| root.join("bin").join(file_name))
+        .find(|candidate| candidate.is_file())
+}
+
+fn apply_no_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
+}
+
 fn command_is_available(program: &str) -> bool {
-    Command::new(program)
+    let mut command = Command::new(program);
+    command
         .arg("-version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    apply_no_window(&mut command);
+
+    command
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -905,6 +1407,7 @@ fn main() {
             load_config,
             save_config,
             append_log,
+            resolve_rtsp_stream_uri,
             start_rtsp_preview,
             stop_rtsp_preview,
             discover_onvif_cameras

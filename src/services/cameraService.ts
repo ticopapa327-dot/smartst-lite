@@ -13,12 +13,35 @@ export interface CameraDraft {
   rtspUrl: string;
 }
 
+export interface RtspStreamResolution {
+  rtspUrl: string;
+  profileToken: string;
+  profileName: string;
+  mediaXaddr: string;
+  message: string;
+}
+
 export async function discoverOnvifCameras(): Promise<DiscoveredOnvifCamera[]> {
   if (!isTauriRuntime()) {
     throw new Error("自动发现需要在 SmartST Lite Windows 桌面客户端中运行。");
   }
 
   return invoke<DiscoveredOnvifCamera[]>("discover_onvif_cameras");
+}
+
+export async function resolveRtspStreamUri(
+  draft: CameraDraft,
+): Promise<RtspStreamResolution> {
+  if (!isTauriRuntime()) {
+    throw new Error("ONVIF 获取 RTSP 地址需要在 SmartST Lite Windows 桌面客户端中运行。");
+  }
+
+  return invoke<RtspStreamResolution>("resolve_rtsp_stream_uri", {
+    ipAddress: draft.ipAddress,
+    onvifPort: draft.onvifPort,
+    username: draft.username,
+    password: draft.password,
+  });
 }
 
 export function draftFromDiscoveredCamera(
@@ -49,7 +72,9 @@ export function createCameraConfig(
     rtspUrl: draft.rtspUrl.trim() || buildRtspCandidate(draft),
     role: index === 0 ? "primary" : "secondary",
     status: "saved",
-    note: "TODO: 接入真实 ONVIF GetStreamUri 后自动更新 RTSP 地址。",
+    note: draft.rtspUrl.trim()
+      ? "RTSP 地址来自 ONVIF GetStreamUri 或手动填写。"
+      : "未获取到 ONVIF StreamUri，已使用常见格式候选地址。",
     createdAt: now,
     updatedAt: now,
   };
@@ -68,7 +93,9 @@ export function updateCameraConfig(
     password: draft.password,
     rtspUrl: draft.rtspUrl.trim() || buildRtspCandidate(draft),
     status: "saved",
-    note: "TODO: 接入真实 ONVIF GetStreamUri 后自动更新 RTSP 地址。",
+    note: draft.rtspUrl.trim()
+      ? "RTSP 地址来自 ONVIF GetStreamUri 或手动填写。"
+      : "未获取到 ONVIF StreamUri，已使用常见格式候选地址。",
     updatedAt: new Date().toISOString(),
   };
 }

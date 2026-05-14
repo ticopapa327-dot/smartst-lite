@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Save, X } from "lucide-react";
+import { Loader2, Radio, Save, X } from "lucide-react";
 import type { CameraConfig } from "../domain/types";
 import {
   type CameraDraft,
   createCameraConfig,
+  resolveRtspStreamUri,
   updateCameraConfig,
   validateCameraDraft,
 } from "../services/cameraService";
@@ -35,11 +36,14 @@ export function CameraDialog({
 }: CameraDialogProps) {
   const [draft, setDraft] = useState<CameraDraft>(emptyDraft);
   const [error, setError] = useState("");
+  const [hint, setHint] = useState("");
+  const [isResolvingRtsp, setIsResolvingRtsp] = useState(false);
 
   useEffect(() => {
     if (!camera) {
       setDraft({ ...emptyDraft, ...(initialDraft ?? {}) });
       setError("");
+      setHint("");
       return;
     }
 
@@ -52,6 +56,7 @@ export function CameraDialog({
       rtspUrl: camera.rtspUrl,
     });
     setError("");
+    setHint("");
   }, [camera, initialDraft]);
 
   function updateField<K extends keyof CameraDraft>(
@@ -60,9 +65,43 @@ export function CameraDialog({
   ) {
     setDraft((current) => ({ ...current, [key]: value }));
     setError("");
+    setHint("");
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleResolveRtsp() {
+    const validation = validateCameraDraft(draft);
+
+    if (validation) {
+      setError(validation);
+      return null;
+    }
+
+    setIsResolvingRtsp(true);
+    setError("");
+    setHint("正在通过 ONVIF 获取 RTSP StreamUri...");
+
+    try {
+      const resolution = await resolveRtspStreamUri(draft);
+      const nextDraft = { ...draft, rtspUrl: resolution.rtspUrl };
+      setDraft(nextDraft);
+      setHint(
+        `${resolution.message} Profile: ${resolution.profileName || resolution.profileToken}`,
+      );
+      return nextDraft;
+    } catch (resolveError) {
+      const message =
+        resolveError instanceof Error
+          ? resolveError.message
+          : "ONVIF 获取 RTSP 地址失败。";
+      setError(`${message} 可手动填写 ODM 中显示的 RTSP 地址后保存。`);
+      setHint("");
+      return null;
+    } finally {
+      setIsResolvingRtsp(false);
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const validation = validateCameraDraft(draft);
 
@@ -71,10 +110,19 @@ export function CameraDialog({
       return;
     }
 
+    let draftToSave = draft;
+    if (!draft.rtspUrl.trim()) {
+      const resolvedDraft = await handleResolveRtsp();
+      if (!resolvedDraft) {
+        return;
+      }
+      draftToSave = resolvedDraft;
+    }
+
     onSave(
       camera
-        ? updateCameraConfig(camera, draft)
-        : createCameraConfig(draft, cameraIndex),
+        ? updateCameraConfig(camera, draftToSave)
+        : createCameraConfig(draftToSave, cameraIndex),
     );
   }
 
@@ -140,20 +188,36 @@ export function CameraDialog({
 
           <label className="full-width">
             RTSP 地址
-            <input
-              value={draft.rtspUrl}
-              onChange={(event) => updateField("rtspUrl", event.target.value)}
-              placeholder="留空时生成常见海康格式候选地址"
-            />
+            <div className="input-with-button">
+              <input
+                value={draft.rtspUrl}
+                onChange={(event) => updateField("rtspUrl", event.target.value)}
+                placeholder="点击获取 RTSP，或填写 ODM 中显示的地址"
+              />
+              <button
+                className="secondary-button"
+                disabled={isResolvingRtsp}
+                onClick={handleResolveRtsp}
+                type="button"
+              >
+                {isResolvingRtsp ? (
+                  <Loader2 className="spin" size={17} />
+                ) : (
+                  <Radio size={17} />
+                )}
+                获取 RTSP
+              </button>
+            </div>
           </label>
 
+          {hint && <div className="form-hint full-width">{hint}</div>}
           {error && <div className="form-error full-width">{error}</div>}
 
           <div className="modal-actions full-width">
             <button className="secondary-button" onClick={onClose} type="button">
               取消
             </button>
-            <button className="primary-button" type="submit">
+            <button className="primary-button" disabled={isResolvingRtsp} type="submit">
               <Save size={17} />
               保存摄像机
             </button>

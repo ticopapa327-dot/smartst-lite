@@ -957,6 +957,16 @@ input:focus {
   font-weight: 800;
 }
 
+.form-hint {
+  padding: 10px 12px;
+  border: 1px solid #bfe8ef;
+  border-radius: 8px;
+  color: #0b6b78;
+  background: #f0fbfd;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .modal-actions {
   justify-content: flex-end;
 }
