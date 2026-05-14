@@ -1,22 +1,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use get_if_addrs::{get_if_addrs, IfAddr};
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Cursor, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::Mutex,
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 const APP_DIR_NAME: &str = "SmartST Lite";
 const CONFIG_FILE_NAME: &str = "config.json";
 const LOG_FILE_NAME: &str = "smartst-lite.log";
 const WS_DISCOVERY_ADDRESS: &str = "239.255.255.250:3702";
 const WS_DISCOVERY_PORT: u16 = 3702;
+const PREVIEW_HTTP_PORT_START: u16 = 38180;
+const PREVIEW_HTTP_PORT_END: u16 = 38199;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +43,28 @@ struct DiscoveryInterface {
     bind_ip: Option<Ipv4Addr>,
     broadcast_ip: Option<Ipv4Addr>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RtspPreviewSession {
+    playback_url: String,
+    log_path: String,
+    message: String,
+}
+
+struct PreviewProcess {
+    child: Child,
+    directory: PathBuf,
+}
+
+#[derive(Default)]
+struct PreviewRuntime {
+    server_port: Option<u16>,
+    sessions: HashMap<String, PreviewProcess>,
+}
+
+static PREVIEW_RUNTIME: Lazy<Mutex<PreviewRuntime>> =
+    Lazy::new(|| Mutex::new(PreviewRuntime::default()));
 
 #[tauri::command]
 fn get_default_paths() -> Result<Value, String> {
@@ -101,6 +130,136 @@ fn append_log(entry: Value) -> Result<(), String> {
     writeln!(file, "{line}").map_err(|error| format!("Failed to write log entry: {error}"))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn start_rtsp_preview(camera_id: String, rtsp_url: String) -> Result<RtspPreviewSession, String> {
+    let rtsp_url = rtsp_url.trim().to_string();
+    if !(rtsp_url.starts_with("rtsp://") || rtsp_url.starts_with("rtsps://")) {
+        return Err("RTSP 地址无效，请填写以 rtsp:// 开头的视频流地址。".to_string());
+    }
+
+    let ffmpeg_path = find_ffmpeg_executable()?;
+    let safe_camera_id = sanitize_camera_id(&camera_id);
+    let port = ensure_preview_server()?;
+    stop_preview_session(&safe_camera_id)?;
+
+    let preview_dir = app_base_dir()?.join("previews").join(&safe_camera_id);
+    if preview_dir.exists() {
+        fs::remove_dir_all(&preview_dir).map_err(|error| format!("清理旧预览缓存失败: {error}"))?;
+    }
+    fs::create_dir_all(&preview_dir).map_err(|error| format!("创建预览缓存目录失败: {error}"))?;
+
+    let log_path = log_dir()?.join(format!("ffmpeg-preview-{safe_camera_id}.log"));
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建日志目录失败: {error}"))?;
+    }
+    let mut log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|error| format!("打开 FFmpeg 日志失败: {error}"))?;
+    let _ = writeln!(log_file, "\n=== SmartST Lite RTSP preview start ===");
+    let _ = writeln!(log_file, "rtsp_url={}", redact_rtsp_url(&rtsp_url));
+
+    let mut child = Command::new(&ffmpeg_path)
+        .current_dir(&preview_dir)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            &rtsp_url,
+            "-an",
+            "-vf",
+            "scale=1280:-2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "15",
+            "-g",
+            "30",
+            "-f",
+            "hls",
+            "-hls_time",
+            "1",
+            "-hls_list_size",
+            "5",
+            "-hls_flags",
+            "delete_segments+omit_endlist+independent_segments",
+            "-hls_segment_filename",
+            "segment_%03d.ts",
+            "index.m3u8",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(log_file))
+        .spawn()
+        .map_err(|error| format!("启动 FFmpeg 失败: {error}"))?;
+
+    let playlist_path = preview_dir.join("index.m3u8");
+    let started = Instant::now();
+    let mut message = "FFmpeg 已启动，正在生成本地预览流。".to_string();
+
+    while started.elapsed() < Duration::from_secs(8) {
+        if playlist_path.exists()
+            && fs::metadata(&playlist_path)
+                .map(|metadata| metadata.len() > 0)
+                .unwrap_or(false)
+        {
+            message = "本地预览流已启动。".to_string();
+            break;
+        }
+
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("读取 FFmpeg 状态失败: {error}"))?
+        {
+            return Err(format!(
+                "FFmpeg 未能打开 RTSP 流，退出状态: {status}。请检查用户名、密码、RTSP 地址，并查看日志: {}",
+                log_path.to_string_lossy()
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    let playback_url = format!("http://127.0.0.1:{port}/preview/{safe_camera_id}/index.m3u8");
+    PREVIEW_RUNTIME
+        .lock()
+        .map_err(|_| "预览服务状态锁定失败。".to_string())?
+        .sessions
+        .insert(
+            safe_camera_id,
+            PreviewProcess {
+                child,
+                directory: preview_dir,
+            },
+        );
+
+    Ok(RtspPreviewSession {
+        playback_url,
+        log_path: log_path.to_string_lossy().to_string(),
+        message,
+    })
+}
+
+#[tauri::command]
+fn stop_rtsp_preview(camera_id: String) -> Result<(), String> {
+    let safe_camera_id = sanitize_camera_id(&camera_id);
+    stop_preview_session(&safe_camera_id)
 }
 
 #[tauri::command]
@@ -253,6 +412,224 @@ fn ipv4_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
     let mask_value = u32::from(netmask);
 
     Ipv4Addr::from(ip_value | !mask_value)
+}
+
+fn ensure_preview_server() -> Result<u16, String> {
+    let mut runtime = PREVIEW_RUNTIME
+        .lock()
+        .map_err(|_| "预览服务状态锁定失败。".to_string())?;
+
+    if let Some(port) = runtime.server_port {
+        return Ok(port);
+    }
+
+    for port in PREVIEW_HTTP_PORT_START..=PREVIEW_HTTP_PORT_END {
+        let address = format!("127.0.0.1:{port}");
+        if let Ok(server) = Server::http(&address) {
+            thread::spawn(move || run_preview_server(server));
+            runtime.server_port = Some(port);
+            return Ok(port);
+        }
+    }
+
+    Err("无法启动本地预览服务，请检查 38180-38199 端口是否被占用。".to_string())
+}
+
+fn run_preview_server(server: Server) {
+    for request in server.incoming_requests() {
+        if request.method() == &Method::Options {
+            let _ = request.respond(preview_http_response(204, Vec::new(), "text/plain"));
+            continue;
+        }
+
+        let response = preview_file_response(request.url());
+        let _ = request.respond(response);
+    }
+}
+
+fn preview_file_response(url: &str) -> Response<Cursor<Vec<u8>>> {
+    let Some((camera_id, file_name)) = parse_preview_url(url) else {
+        return preview_http_response(404, b"Not found".to_vec(), "text/plain; charset=utf-8");
+    };
+
+    let directory = PREVIEW_RUNTIME.lock().ok().and_then(|runtime| {
+        runtime
+            .sessions
+            .get(&camera_id)
+            .map(|session| session.directory.clone())
+    });
+
+    let Some(directory) = directory else {
+        return preview_http_response(
+            404,
+            b"Preview session not found".to_vec(),
+            "text/plain; charset=utf-8",
+        );
+    };
+
+    let path = directory.join(&file_name);
+    if !path.starts_with(&directory) || !path.is_file() {
+        return preview_http_response(
+            404,
+            b"Preview file not found".to_vec(),
+            "text/plain; charset=utf-8",
+        );
+    }
+
+    match fs::read(&path) {
+        Ok(data) => preview_http_response(200, data, preview_content_type(&file_name)),
+        Err(_) => preview_http_response(
+            404,
+            b"Preview file not readable".to_vec(),
+            "text/plain; charset=utf-8",
+        ),
+    }
+}
+
+fn preview_http_response(
+    status_code: u16,
+    body: Vec<u8>,
+    content_type: &str,
+) -> Response<Cursor<Vec<u8>>> {
+    Response::from_data(body)
+        .with_status_code(StatusCode(status_code))
+        .with_header(http_header("Access-Control-Allow-Origin", "*"))
+        .with_header(http_header("Access-Control-Allow-Methods", "GET, OPTIONS"))
+        .with_header(http_header("Access-Control-Allow-Headers", "*"))
+        .with_header(http_header(
+            "Cache-Control",
+            "no-cache, no-store, must-revalidate",
+        ))
+        .with_header(http_header("Content-Type", content_type))
+}
+
+fn http_header(name: &str, value: &str) -> Header {
+    Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid HTTP header")
+}
+
+fn parse_preview_url(url: &str) -> Option<(String, String)> {
+    let path = url.split('?').next()?.trim_start_matches('/');
+    let mut parts = path.split('/');
+
+    if parts.next()? != "preview" {
+        return None;
+    }
+
+    let camera_id = parts.next()?.to_string();
+    let file_name = parts.next()?.to_string();
+
+    if parts.next().is_some()
+        || camera_id.is_empty()
+        || file_name.is_empty()
+        || file_name.contains('\\')
+        || file_name.contains('/')
+        || file_name.contains("..")
+    {
+        return None;
+    }
+
+    Some((camera_id, file_name))
+}
+
+fn preview_content_type(file_name: &str) -> &'static str {
+    if file_name.ends_with(".m3u8") {
+        "application/vnd.apple.mpegurl"
+    } else if file_name.ends_with(".ts") {
+        "video/mp2t"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn stop_preview_session(camera_id: &str) -> Result<(), String> {
+    let session = PREVIEW_RUNTIME
+        .lock()
+        .map_err(|_| "预览服务状态锁定失败。".to_string())?
+        .sessions
+        .remove(camera_id);
+
+    if let Some(mut session) = session {
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+        let _ = fs::remove_dir_all(session.directory);
+    }
+
+    Ok(())
+}
+
+fn find_ffmpeg_executable() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("SMARTST_FFMPEG_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bundled = exe_dir.join("ffmpeg.exe");
+            if bundled.is_file() {
+                return Ok(bundled);
+            }
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        let local = current_dir.join("ffmpeg.exe");
+        if local.is_file() {
+            return Ok(local);
+        }
+    }
+
+    if command_is_available("ffmpeg") {
+        return Ok(PathBuf::from("ffmpeg"));
+    }
+
+    Err(
+        "未找到 FFmpeg。请将 ffmpeg.exe 放到 SmartST Lite.exe 同目录，或把 FFmpeg 加入系统 PATH。"
+            .to_string(),
+    )
+}
+
+fn command_is_available(program: &str) -> bool {
+    Command::new(program)
+        .arg("-version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn sanitize_camera_id(camera_id: &str) -> String {
+    let sanitized = camera_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if sanitized.is_empty() {
+        "camera".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn redact_rtsp_url(rtsp_url: &str) -> String {
+    let Some((scheme, rest)) = rtsp_url.split_once("://") else {
+        return rtsp_url.to_string();
+    };
+    let Some((_, host_and_path)) = rest.split_once('@') else {
+        return rtsp_url.to_string();
+    };
+
+    format!("{scheme}://***:***@{host_and_path}")
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -528,6 +905,8 @@ fn main() {
             load_config,
             save_config,
             append_log,
+            start_rtsp_preview,
+            stop_rtsp_preview,
             discover_onvif_cameras
         ])
         .run(tauri::generate_context!())
