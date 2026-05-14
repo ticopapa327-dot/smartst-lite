@@ -52,7 +52,7 @@ export function updateCameraConfig(
 
 export function validateCameraDraft(draft: CameraDraft): string | null {
   if (!draft.ipAddress.trim()) {
-    return "请输入摄像机 IP 地址。";
+    return "请输入摄像机 IP 地址；输入框里的示例文字不会自动保存。";
   }
 
   if (!draft.onvifPort.trim()) {

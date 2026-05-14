@@ -93,7 +93,7 @@ export function CameraDialog({
             <input
               value={draft.name}
               onChange={(event) => updateField("name", event.target.value)}
-              placeholder={`摄像机 ${cameraIndex + 1}`}
+              placeholder={`例如 摄像机 ${cameraIndex + 1}`}
             />
           </label>
 
@@ -102,7 +102,7 @@ export function CameraDialog({
             <input
               value={draft.ipAddress}
               onChange={(event) => updateField("ipAddress", event.target.value)}
-              placeholder="192.168.1.64"
+              placeholder="例如 192.168.1.64"
             />
           </label>
 
@@ -111,7 +111,7 @@ export function CameraDialog({
             <input
               value={draft.onvifPort}
               onChange={(event) => updateField("onvifPort", event.target.value)}
-              placeholder="80"
+              placeholder="例如 80 或 2000"
             />
           </label>
 
@@ -120,7 +120,7 @@ export function CameraDialog({
             <input
               value={draft.username}
               onChange={(event) => updateField("username", event.target.value)}
-              placeholder="admin"
+              placeholder="例如 admin"
             />
           </label>
 

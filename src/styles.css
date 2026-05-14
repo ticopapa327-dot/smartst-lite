@@ -708,6 +708,12 @@ input {
   outline: none;
 }
 
+input::placeholder {
+  color: #8da1ad;
+  font-weight: 600;
+  opacity: 1;
+}
+
 input:focus {
   border-color: var(--teal);
   box-shadow: 0 0 0 3px rgba(0, 143, 156, 0.14);
