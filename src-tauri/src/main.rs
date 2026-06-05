@@ -12,7 +12,7 @@ use std::{
     io::{BufRead, BufReader, Cursor, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -110,6 +110,12 @@ struct PreviewProcess {
     directory: PathBuf,
 }
 
+struct NativeWorkerProcess {
+    child: Child,
+    stdin: ChildStdin,
+    line_receiver: mpsc::Receiver<String>,
+}
+
 #[derive(Default)]
 struct PreviewRuntime {
     server_port: Option<u16>,
@@ -118,6 +124,8 @@ struct PreviewRuntime {
 
 static PREVIEW_RUNTIME: Lazy<Mutex<PreviewRuntime>> =
     Lazy::new(|| Mutex::new(PreviewRuntime::default()));
+static NATIVE_WORKER_SESSION: Lazy<Mutex<Option<NativeWorkerProcess>>> =
+    Lazy::new(|| Mutex::new(None));
 
 #[tauri::command]
 fn get_default_paths() -> Result<Value, String> {
@@ -280,6 +288,78 @@ fn probe_native_worker_devices() -> Result<NativeWorkerDeviceProbe, String> {
         devices,
         message: "Native Worker listDevices completed.".to_string(),
     })
+}
+
+#[tauri::command]
+fn start_native_worker_session(params: Option<Value>) -> Result<Value, String> {
+    let mut session = NATIVE_WORKER_SESSION
+        .lock()
+        .map_err(|_| "Native Worker session lock is poisoned.".to_string())?;
+    if session.is_none() {
+        *session = Some(spawn_native_worker_process()?);
+    }
+    let worker = session
+        .as_mut()
+        .ok_or_else(|| "Native Worker session was not created.".to_string())?;
+    let start_params = params.unwrap_or_else(default_native_worker_start_params);
+    let request_id = native_worker_request_id("start");
+    write_native_worker_request(&mut worker.stdin, &request_id, "start", start_params)?;
+    let response =
+        wait_native_worker_response(&worker.line_receiver, &request_id, Duration::from_secs(30));
+    if response.is_err() {
+        if let Some(mut failed_worker) = session.take() {
+            let _ = failed_worker.child.kill();
+            let _ = failed_worker.child.wait();
+        }
+    }
+    response
+}
+
+#[tauri::command]
+fn get_native_worker_session_status() -> Result<Value, String> {
+    let mut session = NATIVE_WORKER_SESSION
+        .lock()
+        .map_err(|_| "Native Worker session lock is poisoned.".to_string())?;
+    let Some(worker) = session.as_mut() else {
+        return Ok(json!({
+            "state": "idle",
+            "captureSession": { "state": "idle" },
+            "channels": [],
+            "stats": { "realMediaSession": false }
+        }));
+    };
+    let request_id = native_worker_request_id("status");
+    write_native_worker_request(&mut worker.stdin, &request_id, "status", Value::Null)?;
+    wait_native_worker_response(&worker.line_receiver, &request_id, Duration::from_secs(10))
+}
+
+#[tauri::command]
+fn stop_native_worker_session() -> Result<Value, String> {
+    let mut session = NATIVE_WORKER_SESSION
+        .lock()
+        .map_err(|_| "Native Worker session lock is poisoned.".to_string())?;
+    let Some(mut worker) = session.take() else {
+        return Ok(json!({
+            "state": "idle",
+            "captureSession": { "state": "idle" },
+            "channels": [],
+            "stats": { "realMediaSession": false }
+        }));
+    };
+    let request_id = native_worker_request_id("stop");
+    let stop_result = write_native_worker_request(
+        &mut worker.stdin,
+        &request_id,
+        "stop",
+        Value::Null,
+    )
+    .and_then(|_| {
+        wait_native_worker_response(&worker.line_receiver, &request_id, Duration::from_secs(30))
+    });
+    let _ = write_native_worker_request(&mut worker.stdin, "shutdown", "shutdown", Value::Null);
+    let _ = worker.child.kill();
+    let _ = worker.child.wait();
+    stop_result
 }
 
 #[tauri::command]
@@ -1299,6 +1379,63 @@ fn native_worker_launch_command(workspace_root: &std::path::Path) -> Result<Comm
     Ok(command)
 }
 
+fn spawn_native_worker_process() -> Result<NativeWorkerProcess, String> {
+    let workspace_root = workspace_root_dir()?;
+    let mut command = native_worker_launch_command(&workspace_root)?;
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_no_window(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Failed to start Native Worker: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Native Worker stdout was not captured.".to_string())?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Native Worker stdin was not captured.".to_string())?;
+    let (line_sender, line_receiver) = mpsc::channel::<String>();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    wait_native_worker_ready(&line_receiver, Duration::from_secs(30))?;
+
+    Ok(NativeWorkerProcess {
+        child,
+        stdin,
+        line_receiver,
+    })
+}
+
+fn default_native_worker_start_params() -> Value {
+    json!({
+        "channels": ["field-camera", "endoscope"],
+        "videoMediaTypeIndex": 0,
+        "audioIndex": 0,
+        "startVideoThread": true,
+        "startAudioThread": true,
+        "videoFrameQueueCapacity": 3
+    })
+}
+
+fn native_worker_request_id(prefix: &str) -> String {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("{prefix}-{suffix}")
+}
+
 fn wait_native_worker_ready(
     line_receiver: &mpsc::Receiver<String>,
     timeout: Duration,
@@ -1687,6 +1824,9 @@ fn main() {
             append_log,
             get_native_worker_readiness,
             probe_native_worker_devices,
+            start_native_worker_session,
+            get_native_worker_session_status,
+            stop_native_worker_session,
             resolve_rtsp_stream_uri,
             start_rtsp_preview,
             stop_rtsp_preview,

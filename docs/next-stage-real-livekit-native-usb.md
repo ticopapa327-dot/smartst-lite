@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 32.2 秒。
+- 结果：通过，耗时约 32.1 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -461,6 +461,9 @@ stop.join=ok
 ```text
 get_native_worker_readiness
 probe_native_worker_devices
+start_native_worker_session
+get_native_worker_session_status
+stop_native_worker_session
 ```
 
 返回内容：
@@ -480,6 +483,7 @@ cargoVersion=<cargo --version>
 - 该入口只做路径、manifest、debug binary 和 Cargo 可用性诊断，不启动采集、不占用摄像头、不发布 LiveKit。
 - `probe_native_worker_devices` 会启动 Native Worker 子进程，等待 `worker.ready`，发送 `listDevices`，随后发送 `shutdown` 并清理进程；该命令只枚举 Media Foundation/WASAPI 设备，不执行 `start`，不打开连续采集线程。
 - 工作台新增 `Device Probe` 面板，用户手动点击 `Probe devices` 后才调用 `probe_native_worker_devices`，显示视频/音频枚举数量和设备来源。
+- 工作台新增手动 `Start session`、`Status`、`Stop` 控件；`Start session` 会按默认 `field-camera,endoscope` 参数启动 Native Worker `start`，并返回 `framesProduced`、`audioPacketsProduced` 等统计。该控制面仍不传输媒体 payload，也不做预览渲染、LiveKit 发布或录像。
 
 验证：
 

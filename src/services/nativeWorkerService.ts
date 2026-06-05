@@ -27,6 +27,33 @@ export interface NativeWorkerDeviceProbe {
   message: string;
 }
 
+export interface NativeWorkerSessionSnapshot {
+  state?: string;
+  captureSession?: {
+    state?: string;
+    boundVideoChannels?: number;
+    boundAudioEndpoints?: number;
+    continuousVideoThreadCount?: number;
+  };
+  channels?: unknown[];
+  stats?: {
+    framesProduced?: number;
+    audioPacketsProduced?: number;
+    videoFrameQueuePushCount?: number;
+    videoFrameQueueDropCount?: number;
+    realMediaSession?: boolean;
+  };
+}
+
+export interface NativeWorkerStartParams {
+  channels?: string[];
+  videoMediaTypeIndex?: number;
+  audioIndex?: number;
+  startVideoThread?: boolean;
+  startAudioThread?: boolean;
+  videoFrameQueueCapacity?: number;
+}
+
 export async function getNativeWorkerReadiness(): Promise<NativeWorkerReadiness> {
   if (!isTauriRuntime()) {
     return {
@@ -80,4 +107,52 @@ export async function probeNativeWorkerDevices(): Promise<NativeWorkerDeviceProb
       message: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+export async function startNativeWorkerSession(
+  params?: NativeWorkerStartParams,
+): Promise<NativeWorkerSessionSnapshot> {
+  if (!isTauriRuntime()) {
+    return idleNativeWorkerSession();
+  }
+
+  return invoke<NativeWorkerSessionSnapshot>("start_native_worker_session", {
+    params: params ?? null,
+  });
+}
+
+export async function getNativeWorkerSessionStatus(): Promise<NativeWorkerSessionSnapshot> {
+  if (!isTauriRuntime()) {
+    return idleNativeWorkerSession();
+  }
+
+  return invoke<NativeWorkerSessionSnapshot>("get_native_worker_session_status");
+}
+
+export async function stopNativeWorkerSession(): Promise<NativeWorkerSessionSnapshot> {
+  if (!isTauriRuntime()) {
+    return idleNativeWorkerSession();
+  }
+
+  return invoke<NativeWorkerSessionSnapshot>("stop_native_worker_session");
+}
+
+function idleNativeWorkerSession(): NativeWorkerSessionSnapshot {
+  return {
+    state: "idle",
+    captureSession: {
+      state: "idle",
+      boundVideoChannels: 0,
+      boundAudioEndpoints: 0,
+      continuousVideoThreadCount: 0,
+    },
+    channels: [],
+    stats: {
+      framesProduced: 0,
+      audioPacketsProduced: 0,
+      videoFrameQueuePushCount: 0,
+      videoFrameQueueDropCount: 0,
+      realMediaSession: false,
+    },
+  };
 }
