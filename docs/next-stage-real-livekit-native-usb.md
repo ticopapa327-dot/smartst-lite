@@ -2,7 +2,7 @@
 
 > 日期：2026-06-05  
 > 阶段：真实 LiveKit JWT / Native Worker / 4 路 USB 硬件验证  
-> 状态：已进入，但 4 路 USB 现场验证受硬件数量阻塞。
+> 状态：已进入；4 路摄像头基础链路可并发打开，目标 USB 采集卡现场压力验证未完成。
 
 ## 1. 本阶段目标
 
@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 31.5 秒。
+- 结果：通过，耗时约 50.7 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -81,6 +81,20 @@ npm run media-worker:native-readiness:smoke
 - 先移植 `listDevices/start/stop/status` 控制面。
 - 再接 Media Foundation/WASAPI 设备枚举。
 
+控制面骨架实现结果：
+
+- 已创建 `native-worker` Rust crate。
+- 已接入 npm 脚本：`media-worker:native`、`media-worker:native:build`、`media-worker:native:smoke`。
+- 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`status`、`shutdown`。
+- 已输出 worker、device、channel、recording、livekit、error 等事件类型。
+- 已加入 `npm run test:all:poc` 回归链路。
+
+当前边界：
+
+- 该 worker 仍是 mock native device/channel 状态机。
+- 尚未接入 Media Foundation 视频枚举、WASAPI 音频枚举、LiveKit native publisher 或真实录像。
+- JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
+
 ## 4. 4 路 USB 验证
 
 新增入口：
@@ -127,6 +141,7 @@ blocker=insufficient-video-devices
 - 当前 4 路可以并发打开，基本链路成立。
 - 当前不是 4 路 30fps 实时验收通过，因为 HD Webcam 和 Rapoo Camera 低于阈值。
 - 该结果只能作为基础可用性测试，不能作为正式手术室 4 路采集卡验收。
+- 按当前阶段决策，现有摄像头性能降级只记录为开发机限制，不阻塞 Native Worker 后续开发；目标采集卡到位后再做采集参数和实时性优化。
 
 现场验证命令：
 
@@ -160,5 +175,5 @@ npm run media-worker:usb4-validate
 1. 准备真实 LiveKit server 和服务端 API key/secret。
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 创建 Rust Native Worker crate，移植现有 JSON Lines 控制面。
-5. 进入 Media Foundation/WASAPI 设备枚举实现。
+4. 进入 Media Foundation/WASAPI 设备枚举实现。
+5. 将枚举结果接入现有 `listDevices` 控制面，替换 mock native device。
