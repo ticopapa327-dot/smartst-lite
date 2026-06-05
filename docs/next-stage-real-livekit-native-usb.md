@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 48.1 秒。
+- 结果：通过，耗时约 44.1 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -125,6 +125,34 @@ audio capture:
 
 注意：当前只完成设备枚举，`capabilitiesStatus=not-enumerated`，尚未读取分辨率/帧率/音频格式能力，也未打开真实采集流。
 
+视频能力探测和单帧采集结果：
+
+```powershell
+npm run media-worker:native:video-probe
+```
+
+本机结果：
+
+```text
+targetVideoIndex=0
+device=HD Webcam
+capabilityCount=17
+firstMediaType=1280x720 NV12 30fps
+sample.status=sample-read
+sample.attempts=2
+sample.elapsedMs=223
+sample.totalLengthBytes=1382400
+sample.bufferCount=1
+sample.sampleDurationHns=333333
+decodeStatus=not-decoded
+```
+
+结论：
+
+- Media Foundation SourceReader 可以打开本机第 0 路视频设备并读到真实样本。
+- 当前样本仍停留在 native buffer 验证层，未进入连续帧循环、预览渲染、LiveKit 发布、编码或录像。
+- 该结果证明 Native Worker 采集技术路线可继续推进，但不能替代目标采集卡 30 分钟/2 小时现场稳定性验收。
+
 ## 4. 4 路 USB 验证
 
 新增入口：
@@ -205,5 +233,5 @@ npm run media-worker:usb4-validate
 1. 准备真实 LiveKit server 和服务端 API key/secret。
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 进入 Media Foundation 视频能力探测和单路 sample reader 采集验证。
-5. 进入 WASAPI 音频格式探测和采集验证。
+4. 进入 WASAPI 音频格式探测和短时音频 buffer 采集验证。
+5. 进入 Media Foundation 连续帧循环和帧率统计，不做 WebView IPC 传帧。

@@ -31,6 +31,7 @@
     "media-worker:native": "cargo run --quiet --manifest-path native-worker/Cargo.toml",
     "media-worker:native:build": "cargo build --manifest-path native-worker/Cargo.toml",
     "media-worker:native:list-devices": "node native-worker/list-devices.mjs",
+    "media-worker:native:video-probe": "node native-worker/video-probe.mjs",
     "media-worker:native:smoke": "node native-worker/smoke.mjs",
     "media-worker:native-readiness": "node media-worker-poc/native-readiness.mjs",
     "media-worker:native-readiness:smoke": "node media-worker-poc/native-readiness-smoke.mjs",

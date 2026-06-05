@@ -1,17 +1,23 @@
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::ptr;
-use std::time::{SystemTime, UNIX_EPOCH};
-use windows::core::{BSTR, PWSTR};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use windows::core::{BSTR, GUID, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
     eCapture, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFActivate, IMFAttributes, MFCreateAttributes, MFEnumDeviceSources, MFShutdown, MFStartup,
-    MFSTARTUP_FULL, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
-    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_VERSION,
+    IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, MFCreateAttributes,
+    MFCreateSourceReaderFromMediaSource, MFEnumDeviceSources, MFMediaType_Video, MFShutdown,
+    MFStartup, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_I420, MFVideoFormat_MJPG,
+    MFVideoFormat_NV12, MFVideoFormat_RGB24, MFVideoFormat_RGB32, MFVideoFormat_UYVY,
+    MFVideoFormat_YUY2, MFVideoFormat_YV12, MFSTARTUP_FULL, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED,
+    MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_ERROR,
+    MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -32,6 +38,16 @@ struct WorkerState {
     livekit: Value,
     stats: Value,
     last_error: Option<Value>,
+}
+
+struct VideoDeviceActivate {
+    index: u32,
+    device_id: String,
+    display_name: String,
+    native_id: String,
+    role: &'static str,
+    transport: &'static str,
+    activate: IMFActivate,
 }
 
 impl WorkerState {
@@ -126,6 +142,16 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
             emit_event("device", "snapshot", devices.clone());
             Ok((devices, false))
         }
+        "probeVideoCapabilities" => Ok((
+            probe_video_capabilities(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
+        "captureVideoSample" => Ok((
+            capture_video_sample(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
         "start" => Ok((start_worker(state, &params), false)),
         "stop" => Ok((stop_worker(state), false)),
         "status" => Ok((state.snapshot(), false)),
@@ -378,6 +404,17 @@ fn enumerate_native_devices() -> Value {
 }
 
 fn enumerate_video_devices() -> Result<Vec<Value>, String> {
+    with_video_device_activates(|records| {
+        Ok(records
+            .iter()
+            .map(video_device_record_to_json)
+            .collect::<Vec<_>>())
+    })
+}
+
+fn with_video_device_activates<T>(
+    callback: impl FnOnce(Vec<VideoDeviceActivate>) -> Result<T, String>,
+) -> Result<T, String> {
     let _mf = MediaFoundationSession::start()?;
     let mut attributes: Option<IMFAttributes> = None;
     unsafe {
@@ -419,25 +456,361 @@ fn enumerate_video_devices() -> Result<Vec<Value>, String> {
                 .get(index as usize)
                 .copied()
                 .unwrap_or("aux-device");
-            devices.push(json!({
-                "deviceId": device_id,
-                "displayName": display_name,
-                "transport": infer_transport(&native_id, &display_name),
-                "role": role,
-                "backend": "media-foundation",
-                "nativeId": native_id,
-                "state": "active",
-                "capabilities": [],
-                "capabilitiesStatus": "not-enumerated",
-                "capabilityProbeRequired": true
-            }));
+            let transport = infer_transport(&native_id, &display_name);
+            devices.push(VideoDeviceActivate {
+                index,
+                device_id,
+                display_name,
+                native_id,
+                role,
+                transport,
+                activate,
+            });
         }
     }
 
     unsafe {
         CoTaskMemFree(Some(activates_ptr.cast()));
     }
-    Ok(devices)
+    callback(devices)
+}
+
+fn video_device_record_to_json(record: &VideoDeviceActivate) -> Value {
+    json!({
+        "deviceId": record.device_id,
+        "displayName": record.display_name,
+        "transport": record.transport,
+        "role": record.role,
+        "backend": "media-foundation",
+        "nativeId": record.native_id,
+        "state": "active",
+        "capabilities": [],
+        "capabilitiesStatus": "not-enumerated",
+        "capabilityProbeRequired": true
+    })
+}
+
+fn probe_video_capabilities(params: &Value) -> Result<Value, String> {
+    let max_media_types = optional_u32(params, "maxMediaTypes")?
+        .unwrap_or(128)
+        .clamp(1, 512);
+    with_video_device_activates(|records| {
+        let selected = select_video_records(&records, params)?;
+        let mut devices = Vec::new();
+        for record in selected {
+            devices.push(probe_video_record_capabilities(record, max_media_types)?);
+        }
+        Ok(json!({
+            "status": "ok",
+            "backend": "media-foundation",
+            "deviceCount": devices.len(),
+            "maxMediaTypes": max_media_types,
+            "devices": devices
+        }))
+    })
+}
+
+fn capture_video_sample(params: &Value) -> Result<Value, String> {
+    let media_type_index = optional_u32(params, "mediaTypeIndex")?.unwrap_or(0);
+    let max_attempts = optional_u32(params, "maxAttempts")?
+        .unwrap_or(60)
+        .clamp(1, 300);
+    with_video_device_activates(|records| {
+        let selected = select_video_records(&records, params)?;
+        let record = selected
+            .first()
+            .copied()
+            .ok_or_else(|| "No video device selected".to_string())?;
+        capture_video_sample_for_record(record, media_type_index, max_attempts)
+    })
+}
+
+fn probe_video_record_capabilities(
+    record: &VideoDeviceActivate,
+    max_media_types: u32,
+) -> Result<Value, String> {
+    let source: IMFMediaSource = unsafe {
+        record
+            .activate
+            .ActivateObject()
+            .map_err(format_windows_error)?
+    };
+    let result = (|| {
+        let reader = unsafe {
+            MFCreateSourceReaderFromMediaSource(&source, None::<&IMFAttributes>)
+                .map_err(format_windows_error)?
+        };
+        let mut capabilities = Vec::new();
+        let mut stop_reason = "max-media-types-reached".to_string();
+        for media_type_index in 0..max_media_types {
+            match unsafe { reader.GetNativeMediaType(video_stream_index(), media_type_index) } {
+                Ok(media_type) => {
+                    capabilities.push(media_type_to_json(&media_type, media_type_index));
+                }
+                Err(error) => {
+                    stop_reason = if capabilities.is_empty() {
+                        format!("first-media-type-error: {}", format_windows_error(error))
+                    } else {
+                        "no-more-media-types".to_string()
+                    };
+                    break;
+                }
+            }
+        }
+        Ok(json!({
+            "device": video_device_record_to_json(record),
+            "capabilitiesStatus": "enumerated",
+            "capabilityCount": capabilities.len(),
+            "stopReason": stop_reason,
+            "capabilities": capabilities
+        }))
+    })();
+    shutdown_media_source(&source, &record.activate);
+    result
+}
+
+fn capture_video_sample_for_record(
+    record: &VideoDeviceActivate,
+    media_type_index: u32,
+    max_attempts: u32,
+) -> Result<Value, String> {
+    let source: IMFMediaSource = unsafe {
+        record
+            .activate
+            .ActivateObject()
+            .map_err(format_windows_error)?
+    };
+    let result = (|| {
+        let reader = unsafe {
+            MFCreateSourceReaderFromMediaSource(&source, None::<&IMFAttributes>)
+                .map_err(format_windows_error)?
+        };
+        let media_type = unsafe {
+            reader
+                .GetNativeMediaType(video_stream_index(), media_type_index)
+                .map_err(format_windows_error)?
+        };
+        unsafe {
+            reader
+                .SetCurrentMediaType(video_stream_index(), None, &media_type)
+                .map_err(format_windows_error)?;
+        }
+
+        let media_type_json = media_type_to_json(&media_type, media_type_index);
+        let started_at = Instant::now();
+        let mut last_flags = 0u32;
+        for attempt in 1..=max_attempts {
+            let mut actual_stream_index = 0u32;
+            let mut stream_flags = 0u32;
+            let mut timestamp_hns = 0i64;
+            let mut sample = None;
+            unsafe {
+                reader
+                    .ReadSample(
+                        video_stream_index(),
+                        0,
+                        Some(&mut actual_stream_index),
+                        Some(&mut stream_flags),
+                        Some(&mut timestamp_hns),
+                        Some(&mut sample),
+                    )
+                    .map_err(format_windows_error)?;
+            }
+            last_flags = stream_flags;
+
+            if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_ERROR.0) {
+                return Err(format!(
+                    "SourceReader reported error flag while reading sample. flags={stream_flags}"
+                ));
+            }
+            if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_ENDOFSTREAM.0) {
+                return Err(format!(
+                    "SourceReader reached end of stream before sample. attempts={attempt}"
+                ));
+            }
+
+            if let Some(sample) = sample {
+                let total_length = unsafe { sample.GetTotalLength().ok() };
+                let buffer_count = unsafe { sample.GetBufferCount().ok() };
+                let sample_time_hns = unsafe { sample.GetSampleTime().ok() };
+                let sample_duration_hns = unsafe { sample.GetSampleDuration().ok() };
+                return Ok(json!({
+                    "status": "sample-read",
+                    "backend": "media-foundation",
+                    "device": video_device_record_to_json(record),
+                    "mediaType": media_type_json,
+                    "attempts": attempt,
+                    "elapsedMs": started_at.elapsed().as_millis(),
+                    "actualStreamIndex": actual_stream_index,
+                    "streamFlags": stream_flags,
+                    "streamFlagNames": source_reader_flag_names(stream_flags),
+                    "timestampHns": timestamp_hns,
+                    "sample": {
+                        "totalLengthBytes": total_length,
+                        "bufferCount": buffer_count,
+                        "sampleTimeHns": sample_time_hns,
+                        "sampleDurationHns": sample_duration_hns
+                    },
+                    "decodeStatus": "not-decoded"
+                }));
+            }
+        }
+
+        Err(format!(
+            "No video sample returned after {max_attempts} attempts. lastFlags={last_flags}"
+        ))
+    })();
+    shutdown_media_source(&source, &record.activate);
+    result
+}
+
+fn select_video_records<'a>(
+    records: &'a [VideoDeviceActivate],
+    params: &Value,
+) -> Result<Vec<&'a VideoDeviceActivate>, String> {
+    if records.is_empty() {
+        return Err("No Media Foundation video devices were found".to_string());
+    }
+    if params.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(records.iter().collect());
+    }
+    if let Some(device_id) = params.get("deviceId").and_then(Value::as_str) {
+        return records
+            .iter()
+            .find(|record| record.device_id == device_id)
+            .map(|record| vec![record])
+            .ok_or_else(|| format!("Video deviceId not found: {device_id}"));
+    }
+    if let Some(native_id) = params.get("nativeId").and_then(Value::as_str) {
+        return records
+            .iter()
+            .find(|record| record.native_id == native_id)
+            .map(|record| vec![record])
+            .ok_or_else(|| format!("Video nativeId not found: {native_id}"));
+    }
+    let index = optional_u32(params, "index")?.unwrap_or(0);
+    records
+        .iter()
+        .find(|record| record.index == index)
+        .map(|record| vec![record])
+        .ok_or_else(|| format!("Video index not found: {index}"))
+}
+
+fn media_type_to_json(media_type: &IMFMediaType, media_type_index: u32) -> Value {
+    let major_type = unsafe { media_type.GetGUID(&MF_MT_MAJOR_TYPE).ok() };
+    let subtype = unsafe { media_type.GetGUID(&MF_MT_SUBTYPE).ok() };
+    let frame_size = unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE).ok() };
+    let frame_rate = unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE).ok() };
+    let (width, height) = frame_size.map(unpack_ratio_u64).unwrap_or((0, 0));
+    let (frame_rate_numerator, frame_rate_denominator) =
+        frame_rate.map(unpack_ratio_u64).unwrap_or((0, 0));
+    let frame_rate_value = if frame_rate_denominator > 0 {
+        Some(frame_rate_numerator as f64 / frame_rate_denominator as f64)
+    } else {
+        None
+    };
+
+    json!({
+        "mediaTypeIndex": media_type_index,
+        "majorType": major_type.map(|guid| guid_label(&guid)),
+        "subtype": subtype.map(|guid| guid_label(&guid)),
+        "subtypeFourCc": subtype.and_then(|guid| guid_fourcc(&guid)),
+        "width": width,
+        "height": height,
+        "frameRateNumerator": frame_rate_numerator,
+        "frameRateDenominator": frame_rate_denominator,
+        "frameRate": frame_rate_value
+    })
+}
+
+fn unpack_ratio_u64(value: u64) -> (u32, u32) {
+    ((value >> 32) as u32, value as u32)
+}
+
+fn guid_label(guid: &GUID) -> String {
+    if *guid == MFMediaType_Video {
+        "video".to_string()
+    } else if *guid == MFVideoFormat_MJPG {
+        "MJPG".to_string()
+    } else if *guid == MFVideoFormat_YUY2 {
+        "YUY2".to_string()
+    } else if *guid == MFVideoFormat_NV12 {
+        "NV12".to_string()
+    } else if *guid == MFVideoFormat_RGB24 {
+        "RGB24".to_string()
+    } else if *guid == MFVideoFormat_RGB32 {
+        "RGB32".to_string()
+    } else if *guid == MFVideoFormat_I420 {
+        "I420".to_string()
+    } else if *guid == MFVideoFormat_H264 {
+        "H264".to_string()
+    } else if *guid == MFVideoFormat_HEVC {
+        "HEVC".to_string()
+    } else if *guid == MFVideoFormat_UYVY {
+        "UYVY".to_string()
+    } else if *guid == MFVideoFormat_YV12 {
+        "YV12".to_string()
+    } else {
+        format!("{guid:?}")
+    }
+}
+
+fn guid_fourcc(guid: &GUID) -> Option<String> {
+    let base_tail = [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+    if guid.data2 != 0 || guid.data3 != 0x0010 || guid.data4 != base_tail {
+        return None;
+    }
+    let bytes = guid.data1.to_le_bytes();
+    if bytes
+        .iter()
+        .all(|byte| byte.is_ascii_graphic() || *byte == b' ')
+    {
+        Some(String::from_utf8_lossy(&bytes).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn optional_u32(params: &Value, field_name: &str) -> Result<Option<u32>, String> {
+    let Some(value) = params.get(field_name) else {
+        return Ok(None);
+    };
+    let Some(number) = value.as_u64() else {
+        return Err(format!("{field_name} must be a non-negative integer"));
+    };
+    u32::try_from(number)
+        .map(Some)
+        .map_err(|_| format!("{field_name} is too large for u32"))
+}
+
+fn video_stream_index() -> u32 {
+    MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32
+}
+
+fn has_source_reader_flag(flags: u32, flag: i32) -> bool {
+    flags & flag as u32 != 0
+}
+
+fn source_reader_flag_names(flags: u32) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_ERROR.0) {
+        names.push("error");
+    }
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_ENDOFSTREAM.0) {
+        names.push("end-of-stream");
+    }
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0) {
+        names.push("current-media-type-changed");
+    }
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED.0) {
+        names.push("native-media-type-changed");
+    }
+    names
+}
+
+fn shutdown_media_source(source: &IMFMediaSource, activate: &IMFActivate) {
+    let _ = unsafe { source.Shutdown() };
+    let _ = unsafe { activate.ShutdownObject() };
 }
 
 fn enumerate_audio_capture_devices() -> Result<Vec<Value>, String> {
