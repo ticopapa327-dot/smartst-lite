@@ -464,6 +464,7 @@ npm run media-worker:native:smoke
 npm run media-worker:native:session-stress
 npm run media-worker:native:audio-payload-consume
 npm run media-worker:native:audio-profile
+npm run media-worker:native:session-backpressure
 ```
 
 本机结果：
@@ -504,6 +505,13 @@ audio-profile.rms.average=0.0002509
 audio-profile.peak.max=0.0020614
 audio-profile.payloadCopyDelta=153
 audio-profile.payloadCopyErrorCountEnd=0
+session-backpressure.video.maxDepth=3
+session-backpressure.video.dropCountEnd=25
+session-backpressure.video.maxBytes=4147200
+session-backpressure.audio.maxDepth=50
+session-backpressure.audio.dropCountEnd=251
+session-backpressure.audio.maxBytes=192000
+session-backpressure.consumerStatus=not-attached
 ```
 
 边界：
@@ -511,6 +519,7 @@ audio-profile.payloadCopyErrorCountEnd=0
 - 该线程只做 WASAPI capture buffer 读取、packet 统计、native-only 有界 PCM payload copy、手动 drain 验证和 RMS/peak 音量统计，尚未做重采样、AEC、发布、编码或录像。
 - `consumeAudioPayloadQueue` 只返回 `consumedPackets`、`consumedBytes`、`remainingDepth`、`latestSequence` 等统计，不返回 PCM payload；后续消费者必须仍保持 native-side 传递，不得把 PCM payload 通过 JSON Lines 返回。
 - `media-worker:native:audio-profile` 只按间隔读取 status 并汇总 RMS/peak、packet/discontinuity/timestamp/payload queue 统计；它是静音/讲话/外接全向麦对比基线工具，不是 AEC 或音质验收。
+- `media-worker:native:session-backpressure` 验证视频/音频 native payload queue 深度不超过配置容量，并记录无消费者时的 drop 计数；该结果证明内存有界，不证明丢帧或丢包在生产质量上可接受。
 - 当前音量数值只代表本机测试环境输入电平，不作为验收阈值；后续需要增加静音、讲话声和外接全向麦的对比样本。
 - `stop` 会设置停止标志并 join 线程；`shutdown` 在 worker 仍运行时也会先清理会话。
 
@@ -561,11 +570,12 @@ npm run media-worker:native:session-stress
 npm run media-worker:native:payload-consume
 npm run media-worker:native:audio-payload-consume
 npm run media-worker:native:audio-profile
+npm run media-worker:native:session-backpressure
 npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 5 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run media-worker:native:audio-payload-consume` 验证 1000ms 内 94-95 个 PCM packet copy 后手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`exportedOverJson=false`；`npm run media-worker:native:audio-profile` 验证 2 秒内 4 次 status 采样，packet 增长 153、RMS/peak 可读、payload copy error 为 0；`npm run test:all:poc` 完整回归耗时约 39.1 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 5 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run media-worker:native:audio-payload-consume` 验证 1000ms 内 94-95 个 PCM packet copy 后手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`exportedOverJson=false`；`npm run media-worker:native:audio-profile` 验证 2 秒内 4 次 status 采样，packet 增长 153-154、RMS/peak 可读、payload copy error 为 0；`npm run media-worker:native:session-backpressure` 验证 3 秒无消费者场景下视频队列 `maxDepth=3`、音频队列 `maxDepth=50` 且 drop 计数增长；`npm run test:all:poc` 完整回归耗时约 42.4 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 
@@ -649,4 +659,4 @@ npm run media-worker:usb4-validate
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
 4. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 native payload frameQueue。
 5. 用 `media-worker:native:audio-profile` 分别采集静音、讲话、外接全向麦样本，再进入重采样和 AEC 边界验证。
-6. 将视频/音频 native payload queue 对接实际预览、LiveKit native publisher 或录像写入前，先完成格式协商和 backpressure 策略。
+6. 将视频/音频 native payload queue 对接实际预览、LiveKit native publisher 或录像写入前，继续补充周期性 drain/backpressure 场景和格式协商策略。

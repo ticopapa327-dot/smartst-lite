@@ -165,6 +165,22 @@ $env:SMARTST_NATIVE_AUDIO_PROFILE_OUTPUT="tmp/audio-profile-quiet-room.json"
 npm run media-worker:native:audio-profile
 ```
 
+## Profile Native Queue Backpressure
+
+```powershell
+npm run media-worker:native:session-backpressure
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_BACKPRESSURE_DURATION_MS="10000"
+$env:SMARTST_NATIVE_BACKPRESSURE_SAMPLE_INTERVAL_MS="500"
+$env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS="0"
+$env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS="0"
+npm run media-worker:native:session-backpressure
+```
+
 ## Smoke Test
 
 ```powershell
@@ -190,3 +206,5 @@ Each video thread reports `frameQueue` statistics with `mode=native-payload-boun
 The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines. `consumeAudioPayloadQueue` drains queued native PCM packets and returns only metadata and byte counters, so it can validate the future resampler/AEC/publisher/recorder consumer boundary without returning PCM bytes. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or record audio. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
 
 `audio-profile` samples `status` periodically and summarizes packet growth, RMS/peak, silent packets, discontinuities, timestamp errors, and native PCM queue counters. It is intended for quiet-room / speech / external microphone comparison baselines. It does not export PCM payloads, measure echo cancellation, or prove production audio quality.
+
+`session-backpressure` starts the native video and audio threads, samples status, and verifies native payload queue depths remain bounded by configured capacity while drop counters grow when no consumer drains the queues. Optional periodic drain environment variables can simulate future preview, publisher, or recorder consumers. This is a memory/backpressure baseline only; it does not prove dropped frames or packets are acceptable for production.

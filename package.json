@@ -39,6 +39,7 @@
     "media-worker:native:payload-consume": "node native-worker/payload-consume.mjs",
     "media-worker:native:audio-payload-consume": "node native-worker/audio-payload-consume.mjs",
     "media-worker:native:audio-profile": "node native-worker/audio-profile.mjs",
+    "media-worker:native:session-backpressure": "node native-worker/session-backpressure.mjs",
     "media-worker:native:smoke": "node native-worker/smoke.mjs",
     "media-worker:native-readiness": "node media-worker-poc/native-readiness.mjs",
     "media-worker:native-readiness:smoke": "node media-worker-poc/native-readiness-smoke.mjs",
