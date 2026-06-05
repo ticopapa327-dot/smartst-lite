@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::io::{self, BufRead, Write};
 use std::ptr;
 use std::sync::{
@@ -16,7 +17,7 @@ use windows::Win32::Media::Audio::{
     WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, MFCreateAttributes,
+    IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, IMFSample, MFCreateAttributes,
     MFCreateSourceReaderFromMediaSource, MFEnumDeviceSources, MFMediaType_Video, MFShutdown,
     MFStartup, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_I420, MFVideoFormat_MJPG,
     MFVideoFormat_NV12, MFVideoFormat_RGB24, MFVideoFormat_RGB32, MFVideoFormat_UYVY,
@@ -89,6 +90,7 @@ struct AudioCaptureRuntime {
 struct VideoCaptureRuntime {
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<VideoCaptureThreadStats>>,
+    _payload_queue: Arc<Mutex<VideoPayloadQueue>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -143,6 +145,13 @@ struct VideoCaptureThreadStats {
     frame_queue_latest_timestamp_hns: Option<i64>,
     frame_queue_latest_sample_time_hns: Option<i64>,
     frame_queue_latest_total_length_bytes: Option<u32>,
+    frame_payload_queue_depth: u32,
+    frame_payload_queue_bytes: u64,
+    frame_payload_copy_count: u64,
+    frame_payload_copy_error_count: u64,
+    frame_payload_total_copied_bytes: u64,
+    frame_payload_dropped_bytes: u64,
+    frame_payload_latest_bytes: Option<u32>,
     read_count: u64,
     sample_count: u64,
     empty_read_count: u64,
@@ -162,6 +171,19 @@ struct VideoCaptureThreadStats {
     last_error: Option<String>,
 }
 
+struct VideoPayloadQueue {
+    frames: VecDeque<Vec<u8>>,
+    bytes: u64,
+}
+
+struct VideoPayloadQueuePush {
+    depth: u32,
+    bytes: u64,
+    payload_bytes: u32,
+    dropped_frame: bool,
+    dropped_bytes: u64,
+}
+
 struct AudioLevelPacketMeasurement {
     status: &'static str,
     format: &'static str,
@@ -169,6 +191,42 @@ struct AudioLevelPacketMeasurement {
     sample_count: u64,
     sum_squares: f64,
     peak: f64,
+}
+
+impl VideoPayloadQueue {
+    fn new() -> Self {
+        Self {
+            frames: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
+    fn push(&mut self, payload: Vec<u8>, capacity: u32) -> VideoPayloadQueuePush {
+        let capacity = capacity.max(1) as usize;
+        let mut dropped_frame = false;
+        let mut dropped_bytes = 0u64;
+        while self.frames.len() >= capacity {
+            if let Some(dropped) = self.frames.pop_front() {
+                dropped_frame = true;
+                dropped_bytes = dropped_bytes.saturating_add(dropped.len() as u64);
+                self.bytes = self.bytes.saturating_sub(dropped.len() as u64);
+            } else {
+                break;
+            }
+        }
+
+        let payload_bytes = u32::try_from(payload.len()).unwrap_or(u32::MAX);
+        self.bytes = self.bytes.saturating_add(payload.len() as u64);
+        self.frames.push_back(payload);
+
+        VideoPayloadQueuePush {
+            depth: self.frames.len() as u32,
+            bytes: self.bytes,
+            payload_bytes,
+            dropped_frame,
+            dropped_bytes,
+        }
+    }
 }
 
 impl WorkerState {
@@ -546,6 +604,10 @@ fn build_capture_session_start(
         "videoCaptureThreads": [],
         "videoFrameQueuePushCount": 0,
         "videoFrameQueueDropCount": 0,
+        "videoPayloadCopyCount": 0,
+        "videoPayloadCopyErrorCount": 0,
+        "videoPayloadQueueBytes": 0,
+        "videoPayloadTotalCopiedBytes": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
@@ -776,6 +838,10 @@ fn mock_capture_session_start(
         "videoCaptureThreads": [],
         "videoFrameQueuePushCount": 0,
         "videoFrameQueueDropCount": 0,
+        "videoPayloadCopyCount": 0,
+        "videoPayloadCopyErrorCount": 0,
+        "videoPayloadQueueBytes": 0,
+        "videoPayloadTotalCopiedBytes": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
@@ -852,8 +918,10 @@ fn start_video_capture_runtime(
         media_type_index,
         frame_queue_capacity,
     )));
+    let payload_queue = Arc::new(Mutex::new(VideoPayloadQueue::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_stats = Arc::clone(&stats);
+    let thread_payload_queue = Arc::clone(&payload_queue);
     let handle = thread::spawn(move || {
         run_video_capture_thread(
             channel_id,
@@ -862,11 +930,13 @@ fn start_video_capture_runtime(
             frame_queue_capacity,
             thread_stop,
             thread_stats,
+            thread_payload_queue,
         );
     });
     VideoCaptureRuntime {
         stop,
         stats,
+        _payload_queue: payload_queue,
         handle: Some(handle),
     }
 }
@@ -893,9 +963,10 @@ fn run_video_capture_thread(
     _channel_id: String,
     video_index: u32,
     media_type_index: u32,
-    _frame_queue_capacity: u32,
+    frame_queue_capacity: u32,
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<VideoCaptureThreadStats>>,
+    payload_queue: Arc<Mutex<VideoPayloadQueue>>,
 ) {
     let started = Instant::now();
     update_video_stats(&stats, |stats| {
@@ -985,6 +1056,7 @@ fn run_video_capture_thread(
                     });
 
                     if let Some(sample) = sample {
+                        let payload_copy = copy_video_sample_payload(&sample);
                         update_video_stats(&stats, |stats| {
                             stats.sample_count = stats.sample_count.saturating_add(1);
                             stats.first_timestamp_hns.get_or_insert(timestamp_hns);
@@ -1010,17 +1082,56 @@ fn run_video_capture_thread(
                                 stats.sample_duration_count =
                                     stats.sample_duration_count.saturating_add(1);
                             }
-                            stats.frame_queue_push_count =
-                                stats.frame_queue_push_count.saturating_add(1);
-                            stats.frame_queue_latest_sequence = Some(stats.sample_count);
-                            stats.frame_queue_latest_timestamp_hns = Some(timestamp_hns);
-                            stats.frame_queue_latest_sample_time_hns = sample_time_hns;
-                            stats.frame_queue_latest_total_length_bytes = total_length;
-                            if stats.frame_queue_depth < stats.frame_queue_capacity {
-                                stats.frame_queue_depth = stats.frame_queue_depth.saturating_add(1);
-                            } else {
-                                stats.frame_queue_drop_count =
-                                    stats.frame_queue_drop_count.saturating_add(1);
+                            match payload_copy {
+                                Ok(payload) => {
+                                    let push = payload_queue
+                                        .lock()
+                                        .map(|mut queue| queue.push(payload, frame_queue_capacity));
+                                    match push {
+                                        Ok(push) => {
+                                            stats.frame_queue_push_count =
+                                                stats.frame_queue_push_count.saturating_add(1);
+                                            stats.frame_queue_latest_sequence =
+                                                Some(stats.sample_count);
+                                            stats.frame_queue_latest_timestamp_hns =
+                                                Some(timestamp_hns);
+                                            stats.frame_queue_latest_sample_time_hns =
+                                                sample_time_hns;
+                                            stats.frame_queue_latest_total_length_bytes =
+                                                total_length;
+                                            stats.frame_queue_depth = push.depth;
+                                            stats.frame_payload_queue_depth = push.depth;
+                                            stats.frame_payload_queue_bytes = push.bytes;
+                                            stats.frame_payload_copy_count =
+                                                stats.frame_payload_copy_count.saturating_add(1);
+                                            stats.frame_payload_total_copied_bytes = stats
+                                                .frame_payload_total_copied_bytes
+                                                .saturating_add(u64::from(push.payload_bytes));
+                                            stats.frame_payload_latest_bytes =
+                                                Some(push.payload_bytes);
+                                            if push.dropped_frame {
+                                                stats.frame_queue_drop_count =
+                                                    stats.frame_queue_drop_count.saturating_add(1);
+                                                stats.frame_payload_dropped_bytes = stats
+                                                    .frame_payload_dropped_bytes
+                                                    .saturating_add(push.dropped_bytes);
+                                            }
+                                        }
+                                        Err(_) => {
+                                            stats.frame_payload_copy_error_count = stats
+                                                .frame_payload_copy_error_count
+                                                .saturating_add(1);
+                                            stats.last_error = Some(
+                                                "video payload queue lock poisoned".to_string(),
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    stats.frame_payload_copy_error_count =
+                                        stats.frame_payload_copy_error_count.saturating_add(1);
+                                    stats.last_error = Some(error);
+                                }
                             }
                             stats.elapsed_ms = started.elapsed().as_millis();
                         });
@@ -1067,6 +1178,45 @@ fn update_video_stats(
     }
 }
 
+fn copy_video_sample_payload(sample: &IMFSample) -> Result<Vec<u8>, String> {
+    let buffer = unsafe {
+        sample
+            .ConvertToContiguousBuffer()
+            .map_err(format_windows_error)?
+    };
+    let mut data_ptr: *mut u8 = ptr::null_mut();
+    let mut max_length = 0u32;
+    let mut current_length = 0u32;
+    unsafe {
+        buffer
+            .Lock(
+                &mut data_ptr,
+                Some(&mut max_length),
+                Some(&mut current_length),
+            )
+            .map_err(format_windows_error)?;
+    }
+
+    let payload = if current_length == 0 {
+        Ok(Vec::new())
+    } else if data_ptr.is_null() {
+        Err("IMFMediaBuffer::Lock returned a null data pointer".to_string())
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(data_ptr, current_length as usize) };
+        Ok(bytes.to_vec())
+    };
+    let unlock = unsafe { buffer.Unlock().map_err(format_windows_error) };
+
+    match (payload, unlock) {
+        (Ok(payload), Ok(())) => Ok(payload),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(format!("IMFMediaBuffer::Unlock failed: {error}")),
+        (Err(payload_error), Err(unlock_error)) => Err(format!(
+            "{payload_error}; IMFMediaBuffer::Unlock failed: {unlock_error}"
+        )),
+    }
+}
+
 impl VideoCaptureRuntime {
     fn snapshot(&self) -> Value {
         self.stats
@@ -1108,6 +1258,13 @@ impl VideoCaptureThreadStats {
             frame_queue_latest_timestamp_hns: None,
             frame_queue_latest_sample_time_hns: None,
             frame_queue_latest_total_length_bytes: None,
+            frame_payload_queue_depth: 0,
+            frame_payload_queue_bytes: 0,
+            frame_payload_copy_count: 0,
+            frame_payload_copy_error_count: 0,
+            frame_payload_total_copied_bytes: 0,
+            frame_payload_dropped_bytes: 0,
+            frame_payload_latest_bytes: None,
             read_count: 0,
             sample_count: 0,
             empty_read_count: 0,
@@ -1687,6 +1844,46 @@ fn stats_with_runtimes(
                     .and_then(Value::as_u64)
             })
             .sum::<u64>();
+        let payload_copy_count = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("payloadQueue"))
+                    .and_then(|queue| queue.get("copyCount"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
+        let payload_copy_error_count = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("payloadQueue"))
+                    .and_then(|queue| queue.get("copyErrorCount"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
+        let payload_queue_bytes = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("payloadQueue"))
+                    .and_then(|queue| queue.get("bytes"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
+        let payload_total_copied_bytes = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("payloadQueue"))
+                    .and_then(|queue| queue.get("totalCopiedBytes"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
         if let Some(first_video_stats) = video_stats.first() {
             stats["videoCaptureThread"] = first_video_stats.clone();
         }
@@ -1696,6 +1893,10 @@ fn stats_with_runtimes(
         stats["videoBytesCaptured"] = json!(video_bytes_captured);
         stats["videoFrameQueuePushCount"] = json!(frame_queue_push_count);
         stats["videoFrameQueueDropCount"] = json!(frame_queue_drop_count);
+        stats["videoPayloadCopyCount"] = json!(payload_copy_count);
+        stats["videoPayloadCopyErrorCount"] = json!(payload_copy_error_count);
+        stats["videoPayloadQueueBytes"] = json!(payload_queue_bytes);
+        stats["videoPayloadTotalCopiedBytes"] = json!(payload_total_copied_bytes);
     }
     stats
 }
@@ -1778,7 +1979,7 @@ fn video_capture_thread_stats_to_json(stats: &VideoCaptureThreadStats) -> Value 
         "deviceIndex": stats.device_index,
         "mediaTypeIndex": stats.media_type_index,
         "frameQueue": {
-            "mode": "metadata-only-bounded",
+            "mode": "native-payload-bounded",
             "payloadTransport": "native-only",
             "consumerStatus": "not-attached",
             "capacity": stats.frame_queue_capacity,
@@ -1788,7 +1989,19 @@ fn video_capture_thread_stats_to_json(stats: &VideoCaptureThreadStats) -> Value 
             "latestSequence": stats.frame_queue_latest_sequence,
             "latestTimestampHns": stats.frame_queue_latest_timestamp_hns,
             "latestSampleTimeHns": stats.frame_queue_latest_sample_time_hns,
-            "latestTotalLengthBytes": stats.frame_queue_latest_total_length_bytes
+            "latestTotalLengthBytes": stats.frame_queue_latest_total_length_bytes,
+            "payloadQueue": {
+                "mode": "copied-bounded",
+                "transport": "native-only",
+                "exportedOverJson": false,
+                "depth": stats.frame_payload_queue_depth,
+                "bytes": stats.frame_payload_queue_bytes,
+                "copyCount": stats.frame_payload_copy_count,
+                "copyErrorCount": stats.frame_payload_copy_error_count,
+                "totalCopiedBytes": stats.frame_payload_total_copied_bytes,
+                "droppedBytes": stats.frame_payload_dropped_bytes,
+                "latestBytes": stats.frame_payload_latest_bytes
+            }
         },
         "readCount": stats.read_count,
         "sampleCount": stats.sample_count,
@@ -3114,6 +3327,10 @@ fn idle_stats() -> Value {
         "videoCaptureThreads": [],
         "videoFrameQueuePushCount": 0,
         "videoFrameQueueDropCount": 0,
+        "videoPayloadCopyCount": 0,
+        "videoPayloadCopyErrorCount": 0,
+        "videoPayloadQueueBytes": 0,
+        "videoPayloadTotalCopiedBytes": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,

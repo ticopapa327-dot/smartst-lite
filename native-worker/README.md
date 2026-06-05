@@ -15,7 +15,7 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 - `measureVideoFrames` runs a short Media Foundation SourceReader loop and returns frame-rate statistics only.
 - `probeAudioFormat` reads WASAPI mix format for capture endpoints.
 - `captureAudioBuffer` verifies short WASAPI capture buffer access and returns packet/frame statistics only.
-- Video threads expose a metadata-only bounded `frameQueue`; real frame payload queues, preview rendering, AEC processing, LiveKit native publishing, and real recording are still not implemented.
+- Video threads expose a native-only bounded `frameQueue` that copies real Media Foundation sample payloads into native memory while keeping JSON Lines as status-only. Preview rendering, AEC processing, LiveKit native publishing, and real recording are still not implemented.
 
 ## Run
 
@@ -134,8 +134,8 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 
 `captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
 
-`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video statistics thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, or pass `videoFrameQueueCapacity` / `SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the metadata-only bounded frame queue.
+`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, or pass `videoFrameQueueCapacity` / `SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the native-only bounded frame payload queue.
 
-Each video thread reports `frameQueue` statistics with `mode=metadata-only-bounded` and `payloadTransport=native-only`. This queue records frame metadata only; it does not copy or export frame payloads through JSON Lines. Until a preview/publisher/recorder consumer is attached, new metadata overwrites the bounded queue after capacity is reached and increments `dropCount`.
+Each video thread reports `frameQueue` statistics with `mode=native-payload-bounded` and `payloadTransport=native-only`. The worker copies each Media Foundation sample into a bounded native memory queue and reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export frame payloads through JSON Lines. Until a preview/publisher/recorder consumer is attached, new payload frames overwrite the bounded queue after capacity is reached and increment `dropCount`.
 
 The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or record audio. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.

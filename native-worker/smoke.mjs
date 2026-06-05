@@ -74,12 +74,21 @@ try {
       assert(["starting", "initializing", "running", "stopped", "failed"].includes(thread.state), "video thread state is explicit");
       assert(thread.channelId, "video thread channel id is reported");
       assert(Number.isInteger(thread.deviceIndex), "video thread device index is reported");
-      assert(thread.frameQueue?.mode === "metadata-only-bounded", "video frame queue boundary is explicit");
+      assert(thread.frameQueue?.mode === "native-payload-bounded", "video frame queue boundary is explicit");
       assert(thread.frameQueue.payloadTransport === "native-only", "video frame queue keeps payload native-only");
       assert(Number.isInteger(thread.frameQueue.capacity), "video frame queue capacity is reported");
+      assert(thread.frameQueue.payloadQueue?.mode === "copied-bounded", "native payload queue mode is explicit");
+      assert(thread.frameQueue.payloadQueue.transport === "native-only", "native payload queue keeps payload native-only");
+      assert(thread.frameQueue.payloadQueue.exportedOverJson === false, "native payload is not exported through JSON");
+      assert(Number.isInteger(thread.frameQueue.payloadQueue.copyCount), "native payload copy count is reported");
+      assert(Number.isInteger(thread.frameQueue.payloadQueue.copyErrorCount), "native payload copy error count is reported");
+      assert(Number.isInteger(thread.frameQueue.payloadQueue.bytes), "native payload queue bytes are reported");
     }
     assert(Number.isInteger(status.stats.videoFrameQueuePushCount), "video frame queue push aggregate is reported");
     assert(Number.isInteger(status.stats.videoFrameQueueDropCount), "video frame queue drop aggregate is reported");
+    assert(Number.isInteger(status.stats.videoPayloadCopyCount), "video payload copy aggregate is reported");
+    assert(Number.isInteger(status.stats.videoPayloadCopyErrorCount), "video payload copy error aggregate is reported");
+    assert(Number.isInteger(status.stats.videoPayloadQueueBytes), "video payload queue byte aggregate is reported");
   }
   if (started.captureSession?.boundAudioEndpoints > 0) {
     assert(status.stats?.audioCaptureThread, "status reports audio capture thread stats");

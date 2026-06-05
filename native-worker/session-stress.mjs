@@ -92,10 +92,19 @@ try {
       for (const thread of videoThreads) {
         assert(thread.state === "running", `iteration ${iteration}: video thread ${thread.channelId} running`);
         assert(thread.sampleCount > 0, `iteration ${iteration}: video samples captured on ${thread.channelId}`);
-        assert(thread.frameQueue?.mode === "metadata-only-bounded", `iteration ${iteration}: frame queue mode reported on ${thread.channelId}`);
+        assert(thread.frameQueue?.mode === "native-payload-bounded", `iteration ${iteration}: frame queue mode reported on ${thread.channelId}`);
         assert(thread.frameQueue.pushCount === thread.sampleCount, `iteration ${iteration}: frame queue push count matches samples on ${thread.channelId}`);
         assert(thread.frameQueue.depth <= thread.frameQueue.capacity, `iteration ${iteration}: frame queue depth bounded on ${thread.channelId}`);
+        assert(thread.frameQueue.payloadQueue?.mode === "copied-bounded", `iteration ${iteration}: payload queue mode reported on ${thread.channelId}`);
+        assert(thread.frameQueue.payloadQueue.exportedOverJson === false, `iteration ${iteration}: payload is not exported through JSON on ${thread.channelId}`);
+        assert(thread.frameQueue.payloadQueue.copyCount === thread.frameQueue.pushCount, `iteration ${iteration}: payload copy count matches pushes on ${thread.channelId}`);
+        assert(thread.frameQueue.payloadQueue.copyErrorCount === 0, `iteration ${iteration}: payload copy has no errors on ${thread.channelId}`);
+        assert(thread.frameQueue.payloadQueue.depth <= thread.frameQueue.capacity, `iteration ${iteration}: payload queue depth bounded on ${thread.channelId}`);
+        assert(thread.frameQueue.payloadQueue.bytes > 0, `iteration ${iteration}: payload queue keeps native bytes on ${thread.channelId}`);
       }
+      assert(status.stats?.videoPayloadCopyCount === status.stats?.videoFrameQueuePushCount, `iteration ${iteration}: payload copy aggregate matches pushes`);
+      assert(status.stats?.videoPayloadCopyErrorCount === 0, `iteration ${iteration}: payload copy aggregate has no errors`);
+      assert(status.stats?.videoPayloadQueueBytes > 0, `iteration ${iteration}: payload queue aggregate keeps native bytes`);
     }
     if (started.captureSession?.boundAudioEndpoints > 0) {
       assert(audioThread?.state === "running", `iteration ${iteration}: audio thread running`);
@@ -131,6 +140,8 @@ try {
       videoSamples: sumBy(videoThreads, "sampleCount"),
       videoFrameQueuePushCount: status.stats?.videoFrameQueuePushCount ?? 0,
       videoFrameQueueDropCount: status.stats?.videoFrameQueueDropCount ?? 0,
+      videoPayloadCopyCount: status.stats?.videoPayloadCopyCount ?? 0,
+      videoPayloadQueueBytes: status.stats?.videoPayloadQueueBytes ?? 0,
       audioState: audioThread?.state ?? null,
       audioPackets: audioThread?.packetCount ?? 0,
       audioFrames: audioThread?.capturedFrames ?? 0,

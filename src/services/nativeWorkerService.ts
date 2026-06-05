@@ -41,6 +41,10 @@ export interface NativeWorkerSessionSnapshot {
     audioPacketsProduced?: number;
     videoFrameQueuePushCount?: number;
     videoFrameQueueDropCount?: number;
+    videoPayloadCopyCount?: number;
+    videoPayloadCopyErrorCount?: number;
+    videoPayloadQueueBytes?: number;
+    videoPayloadTotalCopiedBytes?: number;
     realMediaSession?: boolean;
   };
 }
@@ -152,6 +156,10 @@ function idleNativeWorkerSession(): NativeWorkerSessionSnapshot {
       audioPacketsProduced: 0,
       videoFrameQueuePushCount: 0,
       videoFrameQueueDropCount: 0,
+      videoPayloadCopyCount: 0,
+      videoPayloadCopyErrorCount: 0,
+      videoPayloadQueueBytes: 0,
+      videoPayloadTotalCopiedBytes: 0,
       realMediaSession: false,
     },
   };

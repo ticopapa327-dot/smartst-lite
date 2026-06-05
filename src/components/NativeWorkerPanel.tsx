@@ -40,7 +40,9 @@ export function NativeWorkerPanel() {
   const audioPackets = session?.stats?.audioPacketsProduced ?? 0;
   const frameQueuePushCount = session?.stats?.videoFrameQueuePushCount ?? 0;
   const frameQueueDropCount = session?.stats?.videoFrameQueueDropCount ?? 0;
-  const realMediaSession = session?.stats?.realMediaSession === true;
+  const payloadCopyCount = session?.stats?.videoPayloadCopyCount ?? 0;
+  const payloadCopyErrorCount = session?.stats?.videoPayloadCopyErrorCount ?? 0;
+  const payloadQueueBytes = session?.stats?.videoPayloadQueueBytes ?? 0;
 
   async function runProbe() {
     setIsProbing(true);
@@ -142,7 +144,10 @@ export function NativeWorkerPanel() {
         <div className="recording-stat">
           <Cpu size={18} />
           <strong>{frameQueuePushCount} push / {frameQueueDropCount} drop</strong>
-          <span>{realMediaSession ? "real media session" : "media session idle"}</span>
+          <span>
+            {formatBytes(payloadQueueBytes)} native payload / {payloadCopyCount} copies
+            {payloadCopyErrorCount > 0 ? ` / ${payloadCopyErrorCount} copy errors` : ""}
+          </span>
         </div>
       </div>
 
@@ -170,4 +175,16 @@ export function NativeWorkerPanel() {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
