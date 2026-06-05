@@ -361,6 +361,25 @@ fn consume_native_worker_video_payload_queue(params: Option<Value>) -> Result<Va
 }
 
 #[tauri::command]
+fn consume_native_worker_audio_payload_queue(params: Option<Value>) -> Result<Value, String> {
+    let mut session = NATIVE_WORKER_SESSION
+        .lock()
+        .map_err(|_| "Native Worker session lock is poisoned.".to_string())?;
+    let Some(worker) = session.as_mut() else {
+        return Err("Native Worker session is not running.".to_string());
+    };
+    let consume_params = params.unwrap_or_else(default_native_worker_audio_payload_consume_params);
+    let request_id = native_worker_request_id("consume-audio-payload");
+    write_native_worker_request(
+        &mut worker.stdin,
+        &request_id,
+        "consumeAudioPayloadQueue",
+        consume_params,
+    )?;
+    wait_native_worker_response(&worker.line_receiver, &request_id, Duration::from_secs(10))
+}
+
+#[tauri::command]
 fn stop_native_worker_session() -> Result<Value, String> {
     let mut session = NATIVE_WORKER_SESSION
         .lock()
@@ -1462,6 +1481,12 @@ fn default_native_worker_payload_consume_params() -> Value {
     })
 }
 
+fn default_native_worker_audio_payload_consume_params() -> Value {
+    json!({
+        "maxPackets": 5
+    })
+}
+
 fn native_worker_request_id(prefix: &str) -> String {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1861,6 +1886,7 @@ fn main() {
             start_native_worker_session,
             get_native_worker_session_status,
             consume_native_worker_video_payload_queue,
+            consume_native_worker_audio_payload_queue,
             stop_native_worker_session,
             resolve_rtsp_stream_uri,
             start_rtsp_preview,
@@ -1892,6 +1918,13 @@ mod tests {
         let params = default_native_worker_payload_consume_params();
 
         assert_eq!(params["maxFrames"], json!(2));
+    }
+
+    #[test]
+    fn default_native_worker_audio_payload_consume_params_keep_payload_native() {
+        let params = default_native_worker_audio_payload_consume_params();
+
+        assert_eq!(params["maxPackets"], json!(5));
     }
 
     #[test]

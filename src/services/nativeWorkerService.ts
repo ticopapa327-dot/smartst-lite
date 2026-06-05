@@ -43,6 +43,8 @@ export interface NativeWorkerSessionSnapshot {
     audioPayloadCopyErrorCount?: number;
     audioPayloadQueueBytes?: number;
     audioPayloadTotalCopiedBytes?: number;
+    audioPayloadConsumeCount?: number;
+    audioPayloadConsumedBytes?: number;
     videoFrameQueuePushCount?: number;
     videoFrameQueueDropCount?: number;
     videoPayloadCopyCount?: number;
@@ -68,6 +70,7 @@ export interface NativeWorkerStartParams {
 export interface NativeWorkerPayloadConsumeParams {
   channelId?: string;
   maxFrames?: number;
+  maxPackets?: number;
 }
 
 export interface NativeWorkerPayloadConsumeResult {
@@ -77,7 +80,9 @@ export interface NativeWorkerPayloadConsumeResult {
   payloadTransport?: string;
   exportedOverJson?: boolean;
   maxFrames?: number;
+  maxPackets?: number;
   consumedFrames?: number;
+  consumedPackets?: number;
   consumedBytes?: number;
   remainingDepth?: number;
   remainingBytes?: number;
@@ -189,6 +194,28 @@ export async function consumeNativeWorkerVideoPayloadQueue(
   });
 }
 
+export async function consumeNativeWorkerAudioPayloadQueue(
+  params?: NativeWorkerPayloadConsumeParams,
+): Promise<NativeWorkerPayloadConsumeResult> {
+  if (!isTauriRuntime()) {
+    return {
+      status: "desktop-only",
+      payloadTransport: "native-only",
+      exportedOverJson: false,
+      maxPackets: params?.maxPackets ?? 0,
+      consumedPackets: 0,
+      consumedBytes: 0,
+      remainingDepth: 0,
+      remainingBytes: 0,
+      latestSequence: null,
+    };
+  }
+
+  return invoke<NativeWorkerPayloadConsumeResult>("consume_native_worker_audio_payload_queue", {
+    params: params ?? null,
+  });
+}
+
 function idleNativeWorkerSession(): NativeWorkerSessionSnapshot {
   return {
     state: "idle",
@@ -206,6 +233,8 @@ function idleNativeWorkerSession(): NativeWorkerSessionSnapshot {
       audioPayloadCopyErrorCount: 0,
       audioPayloadQueueBytes: 0,
       audioPayloadTotalCopiedBytes: 0,
+      audioPayloadConsumeCount: 0,
+      audioPayloadConsumedBytes: 0,
       videoFrameQueuePushCount: 0,
       videoFrameQueueDropCount: 0,
       videoPayloadCopyCount: 0,

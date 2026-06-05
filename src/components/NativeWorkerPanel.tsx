@@ -1,6 +1,7 @@
 import { Activity, Cpu, Mic, RefreshCw, Video } from "lucide-react";
 import { useState } from "react";
 import {
+  consumeNativeWorkerAudioPayloadQueue,
   consumeNativeWorkerVideoPayloadQueue,
   getNativeWorkerSessionStatus,
   probeNativeWorkerDevices,
@@ -23,7 +24,8 @@ interface NativeWorkerDeviceSnapshot {
 export function NativeWorkerPanel() {
   const [probe, setProbe] = useState<NativeWorkerDeviceProbe | null>(null);
   const [session, setSession] = useState<NativeWorkerSessionSnapshot | null>(null);
-  const [payloadConsume, setPayloadConsume] = useState<NativeWorkerPayloadConsumeResult | null>(null);
+  const [videoPayloadConsume, setVideoPayloadConsume] = useState<NativeWorkerPayloadConsumeResult | null>(null);
+  const [audioPayloadConsume, setAudioPayloadConsume] = useState<NativeWorkerPayloadConsumeResult | null>(null);
   const [isProbing, setIsProbing] = useState(false);
   const [isSessionBusy, setIsSessionBusy] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -44,6 +46,8 @@ export function NativeWorkerPanel() {
   const audioPayloadCopyCount = session?.stats?.audioPayloadCopyCount ?? 0;
   const audioPayloadCopyErrorCount = session?.stats?.audioPayloadCopyErrorCount ?? 0;
   const audioPayloadQueueBytes = session?.stats?.audioPayloadQueueBytes ?? 0;
+  const audioPayloadConsumeCount = session?.stats?.audioPayloadConsumeCount ?? 0;
+  const audioPayloadConsumedBytes = session?.stats?.audioPayloadConsumedBytes ?? 0;
   const frameQueuePushCount = session?.stats?.videoFrameQueuePushCount ?? 0;
   const frameQueueDropCount = session?.stats?.videoFrameQueueDropCount ?? 0;
   const payloadCopyCount = session?.stats?.videoPayloadCopyCount ?? 0;
@@ -71,7 +75,8 @@ export function NativeWorkerPanel() {
   async function startSession() {
     setIsSessionBusy(true);
     setSessionError(null);
-    setPayloadConsume(null);
+    setVideoPayloadConsume(null);
+    setAudioPayloadConsume(null);
     try {
       setSession(
         await startNativeWorkerSession({
@@ -108,7 +113,8 @@ export function NativeWorkerPanel() {
     setSessionError(null);
     try {
       setSession(await stopNativeWorkerSession());
-      setPayloadConsume(null);
+      setVideoPayloadConsume(null);
+      setAudioPayloadConsume(null);
     } catch (error) {
       setSessionError(errorMessage(error));
     } finally {
@@ -116,11 +122,24 @@ export function NativeWorkerPanel() {
     }
   }
 
-  async function drainPayloadQueue() {
+  async function drainVideoPayloadQueue() {
     setIsSessionBusy(true);
     setSessionError(null);
     try {
-      setPayloadConsume(await consumeNativeWorkerVideoPayloadQueue({ maxFrames: 2 }));
+      setVideoPayloadConsume(await consumeNativeWorkerVideoPayloadQueue({ maxFrames: 2 }));
+      setSession(await getNativeWorkerSessionStatus());
+    } catch (error) {
+      setSessionError(errorMessage(error));
+    } finally {
+      setIsSessionBusy(false);
+    }
+  }
+
+  async function drainAudioPayloadQueue() {
+    setIsSessionBusy(true);
+    setSessionError(null);
+    try {
+      setAudioPayloadConsume(await consumeNativeWorkerAudioPayloadQueue({ maxPackets: 5 }));
       setSession(await getNativeWorkerSessionStatus());
     } catch (error) {
       setSessionError(errorMessage(error));
@@ -183,9 +202,16 @@ export function NativeWorkerPanel() {
         </div>
         <div className="recording-stat">
           <Activity size={18} />
-          <strong>{payloadConsumeCount} consumed</strong>
+          <strong>{payloadConsumeCount} video consumed</strong>
           <span>
-            {formatBytes(payloadConsumedBytes)} drained / {payloadConsume?.status ?? "not-drained"}
+            {formatBytes(payloadConsumedBytes)} drained / {videoPayloadConsume?.status ?? "not-drained"}
+          </span>
+        </div>
+        <div className="recording-stat">
+          <Mic size={18} />
+          <strong>{audioPayloadConsumeCount} audio consumed</strong>
+          <span>
+            {formatBytes(audioPayloadConsumedBytes)} PCM drained / {audioPayloadConsume?.status ?? "not-drained"}
           </span>
         </div>
       </div>
@@ -204,8 +230,11 @@ export function NativeWorkerPanel() {
         <button className="hmi-button" disabled={isSessionBusy} onClick={refreshSession} type="button">
           Status
         </button>
-        <button className="hmi-button" disabled={isSessionBusy || !isSessionRunning} onClick={drainPayloadQueue} type="button">
-          Drain payload
+        <button className="hmi-button" disabled={isSessionBusy || !isSessionRunning} onClick={drainVideoPayloadQueue} type="button">
+          Drain video
+        </button>
+        <button className="hmi-button" disabled={isSessionBusy || !isSessionRunning} onClick={drainAudioPayloadQueue} type="button">
+          Drain audio
         </button>
         <button className="hmi-button danger" disabled={isSessionBusy || !isSessionRunning} onClick={stopSession} type="button">
           Stop

@@ -5,7 +5,7 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 ## Current Scope
 
 - JSON Lines control plane over stdin/stdout.
-- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `status`, `shutdown`.
+- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `consumeAudioPayloadQueue`, `status`, `shutdown`.
 - `listDevices` uses Windows native enumeration when available:
   - Video: Media Foundation device source enumeration.
   - Audio capture: WASAPI/Core Audio endpoint enumeration.
@@ -134,6 +134,21 @@ $env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
 npm run media-worker:native:payload-consume
 ```
 
+## Consume Native Audio Payload Queue
+
+```powershell
+npm run media-worker:native:audio-payload-consume
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
+$env:SMARTST_NATIVE_AUDIO_PAYLOAD_CONSUME_MAX_PACKETS="5"
+$env:SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
+npm run media-worker:native:audio-payload-consume
+```
+
 ## Smoke Test
 
 ```powershell
@@ -156,4 +171,4 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 
 Each video thread reports `frameQueue` statistics with `mode=native-payload-bounded` and `payloadTransport=native-only`. The worker copies each Media Foundation sample into a bounded native memory queue and reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export frame payloads through JSON Lines. `consumeVideoPayloadQueue` drains queued native payload frames and returns only metadata and byte counters, so it can validate the future preview/publisher/recorder consumer boundary without returning frame bytes. Until a real consumer is attached, new payload frames overwrite the bounded queue after capacity is reached and increment `dropCount`.
 
-The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines, and no consumer command drains audio payloads yet. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or record audio. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
+The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines. `consumeAudioPayloadQueue` drains queued native PCM packets and returns only metadata and byte counters, so it can validate the future resampler/AEC/publisher/recorder consumer boundary without returning PCM bytes. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or record audio. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
