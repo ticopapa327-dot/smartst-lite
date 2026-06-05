@@ -1,11 +1,15 @@
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::ptr;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows::core::{BSTR, GUID, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
-    eCapture, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+    eCapture, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
+    MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, AUDCLNT_BUFFERFLAGS_SILENT,
+    AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR, AUDCLNT_SHAREMODE_SHARED, DEVICE_STATE_ACTIVE,
+    WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
 };
 use windows::Win32::Media::MediaFoundation::{
     IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, MFCreateAttributes,
@@ -25,6 +29,9 @@ use windows::Win32::System::Com::{
 };
 
 const DEFAULT_CHANNELS: [&str; 4] = ["panorama", "field-camera", "endoscope", "aux-device"];
+const WAVE_FORMAT_PCM_TAG: u16 = 1;
+const WAVE_FORMAT_IEEE_FLOAT_TAG: u16 = 3;
+const WAVE_FORMAT_EXTENSIBLE_TAG: u16 = 0xfffe;
 
 #[derive(Debug, Clone)]
 struct WorkerState {
@@ -48,6 +55,15 @@ struct VideoDeviceActivate {
     role: &'static str,
     transport: &'static str,
     activate: IMFActivate,
+}
+
+struct AudioDeviceRecord {
+    index: u32,
+    device_id: String,
+    display_name: String,
+    native_id: String,
+    transport: &'static str,
+    device: IMMDevice,
 }
 
 impl WorkerState {
@@ -149,6 +165,16 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         )),
         "captureVideoSample" => Ok((
             capture_video_sample(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
+        "probeAudioFormat" => Ok((
+            probe_audio_format(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
+        "captureAudioBuffer" => Ok((
+            capture_audio_buffer(&params)
                 .map_err(|message| WorkerError::new("native-media-error", message))?,
             false,
         )),
@@ -814,6 +840,17 @@ fn shutdown_media_source(source: &IMFMediaSource, activate: &IMFActivate) {
 }
 
 fn enumerate_audio_capture_devices() -> Result<Vec<Value>, String> {
+    with_audio_capture_devices(|records| {
+        Ok(records
+            .iter()
+            .map(audio_device_record_to_json)
+            .collect::<Vec<_>>())
+    })
+}
+
+fn with_audio_capture_devices<T>(
+    callback: impl FnOnce(Vec<AudioDeviceRecord>) -> Result<T, String>,
+) -> Result<T, String> {
     let enumerator: IMMDeviceEnumerator = unsafe {
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(format_windows_error)?
     };
@@ -841,22 +878,349 @@ fn enumerate_audio_capture_devices() -> Result<Vec<Value>, String> {
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| native_id.clone());
 
-        devices.push(json!({
-            "deviceId": stable_device_id("wasapi-audio", index, &native_id),
-            "displayName": display_name,
-            "transport": infer_transport(&native_id, &display_name),
-            "role": "room-microphone",
-            "backend": "wasapi",
-            "nativeId": native_id,
-            "dataFlow": "capture",
-            "state": "active",
-            "capabilities": [],
-            "capabilitiesStatus": "not-enumerated",
-            "capabilityProbeRequired": true
-        }));
+        let device_id = stable_device_id("wasapi-audio", index, &native_id);
+        let transport = infer_transport(&native_id, &display_name);
+        devices.push(AudioDeviceRecord {
+            index,
+            device_id,
+            display_name,
+            native_id,
+            transport,
+            device,
+        });
     }
 
-    Ok(devices)
+    callback(devices)
+}
+
+fn audio_device_record_to_json(record: &AudioDeviceRecord) -> Value {
+    json!({
+        "deviceId": record.device_id,
+        "displayName": record.display_name,
+        "transport": record.transport,
+        "role": "room-microphone",
+        "backend": "wasapi",
+        "nativeId": record.native_id,
+        "dataFlow": "capture",
+        "state": "active",
+        "capabilities": [],
+        "capabilitiesStatus": "not-enumerated",
+        "capabilityProbeRequired": true
+    })
+}
+
+fn probe_audio_format(params: &Value) -> Result<Value, String> {
+    let _com = ComApartment::initialize()?;
+    with_audio_capture_devices(|records| {
+        let selected = select_audio_records(&records, params)?;
+        let mut devices = Vec::new();
+        for record in selected {
+            devices.push(probe_audio_record_format(record)?);
+        }
+        Ok(json!({
+            "status": "ok",
+            "backend": "wasapi",
+            "deviceCount": devices.len(),
+            "devices": devices
+        }))
+    })
+}
+
+fn capture_audio_buffer(params: &Value) -> Result<Value, String> {
+    let duration_ms = optional_u32(params, "durationMs")?
+        .unwrap_or(500)
+        .clamp(100, 5_000);
+    let poll_interval_ms = optional_u32(params, "pollIntervalMs")?
+        .unwrap_or(10)
+        .clamp(1, 100);
+    let _com = ComApartment::initialize()?;
+    with_audio_capture_devices(|records| {
+        let selected = select_audio_records(&records, params)?;
+        let record = selected
+            .first()
+            .copied()
+            .ok_or_else(|| "No audio capture device selected".to_string())?;
+        capture_audio_buffer_for_record(record, duration_ms, poll_interval_ms)
+    })
+}
+
+fn probe_audio_record_format(record: &AudioDeviceRecord) -> Result<Value, String> {
+    let audio_client: IAudioClient = unsafe {
+        record
+            .device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(format_windows_error)?
+    };
+    let mut default_period_hns = 0i64;
+    let mut minimum_period_hns = 0i64;
+    let _ = unsafe {
+        audio_client.GetDevicePeriod(Some(&mut default_period_hns), Some(&mut minimum_period_hns))
+    };
+    with_audio_mix_format(&audio_client, |format_ptr| {
+        Ok(json!({
+            "device": audio_device_record_to_json(record),
+            "capabilitiesStatus": "mix-format-enumerated",
+            "mixFormat": wave_format_to_json(format_ptr)?,
+            "devicePeriod": {
+                "defaultHns": default_period_hns,
+                "minimumHns": minimum_period_hns
+            }
+        }))
+    })
+}
+
+fn capture_audio_buffer_for_record(
+    record: &AudioDeviceRecord,
+    duration_ms: u32,
+    poll_interval_ms: u32,
+) -> Result<Value, String> {
+    let audio_client: IAudioClient = unsafe {
+        record
+            .device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(format_windows_error)?
+    };
+    with_audio_mix_format(&audio_client, |format_ptr| {
+        let mix_format = wave_format_to_json(format_ptr)?;
+        let format = unsafe { *format_ptr };
+        let block_align = u64::from(format.nBlockAlign.max(1));
+        let stream_buffer_duration_hns = i64::from(duration_ms.max(500)) * 10_000;
+        unsafe {
+            audio_client
+                .Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    0,
+                    stream_buffer_duration_hns,
+                    0,
+                    format_ptr,
+                    None,
+                )
+                .map_err(format_windows_error)?;
+        }
+        let buffer_frame_capacity = unsafe { audio_client.GetBufferSize().ok() };
+        let stream_latency_hns = unsafe { audio_client.GetStreamLatency().ok() };
+        let capture_client: IAudioCaptureClient =
+            unsafe { audio_client.GetService().map_err(format_windows_error)? };
+        unsafe {
+            audio_client.Start().map_err(format_windows_error)?;
+        }
+
+        let started_at = Instant::now();
+        let capture_result = (|| {
+            let mut poll_count = 0u32;
+            let mut packet_count = 0u64;
+            let mut captured_frames = 0u64;
+            let mut captured_bytes = 0u64;
+            let mut silent_packets = 0u64;
+            let mut discontinuity_packets = 0u64;
+            let mut timestamp_error_packets = 0u64;
+            let mut last_device_position = None;
+            let mut last_qpc_position = None;
+
+            while started_at.elapsed() < Duration::from_millis(u64::from(duration_ms)) {
+                poll_count = poll_count.saturating_add(1);
+                let mut packet_size = unsafe {
+                    capture_client
+                        .GetNextPacketSize()
+                        .map_err(format_windows_error)?
+                };
+                while packet_size > 0 {
+                    let mut data_ptr: *mut u8 = ptr::null_mut();
+                    let mut frames_to_read = 0u32;
+                    let mut flags = 0u32;
+                    let mut device_position = 0u64;
+                    let mut qpc_position = 0u64;
+                    unsafe {
+                        capture_client
+                            .GetBuffer(
+                                &mut data_ptr,
+                                &mut frames_to_read,
+                                &mut flags,
+                                Some(&mut device_position),
+                                Some(&mut qpc_position),
+                            )
+                            .map_err(format_windows_error)?;
+                    }
+
+                    packet_count = packet_count.saturating_add(1);
+                    let frame_count = u64::from(frames_to_read);
+                    captured_frames = captured_frames.saturating_add(frame_count);
+                    captured_bytes =
+                        captured_bytes.saturating_add(frame_count.saturating_mul(block_align));
+                    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_SILENT.0) {
+                        silent_packets = silent_packets.saturating_add(1);
+                    }
+                    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0) {
+                        discontinuity_packets = discontinuity_packets.saturating_add(1);
+                    }
+                    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0) {
+                        timestamp_error_packets = timestamp_error_packets.saturating_add(1);
+                    }
+                    last_device_position = Some(device_position);
+                    last_qpc_position = Some(qpc_position);
+
+                    unsafe {
+                        capture_client
+                            .ReleaseBuffer(frames_to_read)
+                            .map_err(format_windows_error)?;
+                    }
+                    packet_size = unsafe {
+                        capture_client
+                            .GetNextPacketSize()
+                            .map_err(format_windows_error)?
+                    };
+                }
+                thread::sleep(Duration::from_millis(u64::from(poll_interval_ms)));
+            }
+
+            let status = if packet_count > 0 {
+                "buffer-captured"
+            } else {
+                "no-packets"
+            };
+            Ok(json!({
+                "status": status,
+                "backend": "wasapi",
+                "device": audio_device_record_to_json(record),
+                "mixFormat": mix_format,
+                "durationMs": duration_ms,
+                "elapsedMs": started_at.elapsed().as_millis(),
+                "pollIntervalMs": poll_interval_ms,
+                "pollCount": poll_count,
+                "packetCount": packet_count,
+                "capturedFrames": captured_frames,
+                "capturedBytes": captured_bytes,
+                "silentPackets": silent_packets,
+                "discontinuityPackets": discontinuity_packets,
+                "timestampErrorPackets": timestamp_error_packets,
+                "bufferFrameCapacity": buffer_frame_capacity,
+                "streamLatencyHns": stream_latency_hns,
+                "lastDevicePosition": last_device_position,
+                "lastQpcPosition": last_qpc_position,
+                "decodeStatus": "not-decoded"
+            }))
+        })();
+        let stop_result = unsafe { audio_client.Stop().map_err(format_windows_error) };
+        match (capture_result, stop_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+}
+
+fn with_audio_mix_format<T>(
+    audio_client: &IAudioClient,
+    callback: impl FnOnce(*mut WAVEFORMATEX) -> Result<T, String>,
+) -> Result<T, String> {
+    let format_ptr = unsafe { audio_client.GetMixFormat().map_err(format_windows_error)? };
+    if format_ptr.is_null() {
+        return Err("IAudioClient::GetMixFormat returned null".to_string());
+    }
+    let result = callback(format_ptr);
+    unsafe {
+        CoTaskMemFree(Some(format_ptr.cast()));
+    }
+    result
+}
+
+fn select_audio_records<'a>(
+    records: &'a [AudioDeviceRecord],
+    params: &Value,
+) -> Result<Vec<&'a AudioDeviceRecord>, String> {
+    if records.is_empty() {
+        return Err("No WASAPI audio capture devices were found".to_string());
+    }
+    if params.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(records.iter().collect());
+    }
+    if let Some(device_id) = params.get("deviceId").and_then(Value::as_str) {
+        return records
+            .iter()
+            .find(|record| record.device_id == device_id)
+            .map(|record| vec![record])
+            .ok_or_else(|| format!("Audio deviceId not found: {device_id}"));
+    }
+    if let Some(native_id) = params.get("nativeId").and_then(Value::as_str) {
+        return records
+            .iter()
+            .find(|record| record.native_id == native_id)
+            .map(|record| vec![record])
+            .ok_or_else(|| format!("Audio nativeId not found: {native_id}"));
+    }
+    let index = optional_u32(params, "index")?.unwrap_or(0);
+    records
+        .iter()
+        .find(|record| record.index == index)
+        .map(|record| vec![record])
+        .ok_or_else(|| format!("Audio index not found: {index}"))
+}
+
+fn wave_format_to_json(format_ptr: *const WAVEFORMATEX) -> Result<Value, String> {
+    if format_ptr.is_null() {
+        return Err("WAVEFORMATEX pointer is null".to_string());
+    }
+    let format = unsafe { *format_ptr };
+    let format_tag = format.wFormatTag;
+    let channels = format.nChannels;
+    let samples_per_sec = format.nSamplesPerSec;
+    let avg_bytes_per_sec = format.nAvgBytesPerSec;
+    let block_align = format.nBlockAlign;
+    let bits_per_sample = format.wBitsPerSample;
+    let cb_size = format.cbSize;
+    let mut payload = json!({
+        "formatTag": format_tag,
+        "formatTagName": wave_format_tag_name(format_tag),
+        "channels": channels,
+        "samplesPerSec": samples_per_sec,
+        "avgBytesPerSec": avg_bytes_per_sec,
+        "blockAlign": block_align,
+        "bitsPerSample": bits_per_sample,
+        "cbSize": cb_size,
+        "bytesPerFrame": block_align
+    });
+
+    let extensible_extra_size =
+        std::mem::size_of::<WAVEFORMATEXTENSIBLE>() - std::mem::size_of::<WAVEFORMATEX>();
+    if format_tag == WAVE_FORMAT_EXTENSIBLE_TAG && usize::from(cb_size) >= extensible_extra_size {
+        let extensible = unsafe { *(format_ptr.cast::<WAVEFORMATEXTENSIBLE>()) };
+        let valid_bits_per_sample = unsafe { extensible.Samples.wValidBitsPerSample };
+        let channel_mask = extensible.dwChannelMask;
+        let sub_format = extensible.SubFormat;
+        payload["validBitsPerSample"] = json!(valid_bits_per_sample);
+        payload["channelMask"] = json!(channel_mask);
+        payload["channelMaskHex"] = json!(format!("0x{channel_mask:08x}"));
+        payload["subFormat"] = json!(format!("{sub_format:?}"));
+        payload["subFormatName"] = json!(wave_subformat_label(&sub_format));
+    }
+
+    Ok(payload)
+}
+
+fn wave_format_tag_name(format_tag: u16) -> &'static str {
+    match format_tag {
+        WAVE_FORMAT_PCM_TAG => "PCM",
+        WAVE_FORMAT_IEEE_FLOAT_TAG => "IEEE_FLOAT",
+        WAVE_FORMAT_EXTENSIBLE_TAG => "EXTENSIBLE",
+        _ => "UNKNOWN",
+    }
+}
+
+fn wave_subformat_label(guid: &GUID) -> String {
+    let wave_format_tail = [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+    if guid.data2 == 0 && guid.data3 == 0x0010 && guid.data4 == wave_format_tail {
+        match guid.data1 as u16 {
+            WAVE_FORMAT_PCM_TAG => "PCM".to_string(),
+            WAVE_FORMAT_IEEE_FLOAT_TAG => "IEEE_FLOAT".to_string(),
+            other => format!("WAVE_FORMAT_{other}"),
+        }
+    } else {
+        format!("{guid:?}")
+    }
+}
+
+fn has_audio_buffer_flag(flags: u32, flag: i32) -> bool {
+    flags & flag as u32 != 0
 }
 
 fn get_mf_allocated_string(activate: &IMFActivate, key: &windows::core::GUID) -> Option<String> {

@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 44.1 秒。
+- 结果：通过，耗时约 33.1 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -153,7 +153,61 @@ decodeStatus=not-decoded
 - 当前样本仍停留在 native buffer 验证层，未进入连续帧循环、预览渲染、LiveKit 发布、编码或录像。
 - 该结果证明 Native Worker 采集技术路线可继续推进，但不能替代目标采集卡 30 分钟/2 小时现场稳定性验收。
 
-## 4. 4 路 USB 验证
+WASAPI 阶段复测时的当前设备状态：
+
+```text
+测试时间：2026-06-05
+命令：npm run media-worker:native:list-devices
+source=windows-native
+mediaFoundation.count=1
+wasapi.count=1
+video[0]=HD Webcam
+audio[0]=麦克风阵列 (Senary Audio)
+```
+
+说明：该结果只反映 WASAPI 阶段复测时 Windows 当前活跃设备状态，和前一次 4 路摄像头接入测试不是同一次硬件状态。后续进入 4 路采集卡验收前，必须重新确认设备接入和枚举数量。
+
+## 4. WASAPI 音频格式探测和短时采集
+
+新增入口：
+
+```powershell
+npm run media-worker:native:audio-probe
+```
+
+Native Worker 新增命令：
+
+- `probeAudioFormat`：读取 WASAPI capture endpoint 的 mix format。
+- `captureAudioBuffer`：以共享模式初始化 `IAudioClient`，通过 `IAudioCaptureClient` 做短时 buffer 采集统计。
+
+本机结果：
+
+```text
+targetAudioIndex=0
+device=麦克风阵列 (Senary Audio)
+mixFormat=48000Hz, 2ch, EXTENSIBLE/IEEE_FLOAT, 32-bit, blockAlign=8
+devicePeriod.defaultHns=100000
+devicePeriod.minimumHns=30000
+capture.status=buffer-captured
+capture.durationMs=500
+capture.elapsedMs=506
+capture.packetCount=49
+capture.capturedFrames=23520
+capture.capturedBytes=188160
+capture.silentPackets=0
+capture.discontinuityPackets=1
+capture.timestampErrorPackets=0
+decodeStatus=not-decoded
+```
+
+结论：
+
+- WASAPI 可以打开当前系统第 0 路采集端点并读取真实 capture buffer。
+- 当前只验证短时 native buffer 可读性和基础时间戳/packet 统计，尚未进入连续音频线程、重采样、AEC、音量表、LiveKit 发布或录像封装。
+- 首包出现 `DATA_DISCONTINUITY` 计数为 1，短时启动阶段可接受；进入连续音频管线后必须做稳定性统计，不能忽略中途 discontinuity。
+- 手术室交互通话所需回音消除不能靠本次 WASAPI buffer 读取自然获得，后续应在 WebRTC/LiveKit 音频处理链路或独立 AEC 模块中验证。
+
+## 5. 4 路 USB 验证
 
 新增入口：
 
@@ -215,7 +269,7 @@ $env:SMARTST_USB4_DURATION_SECONDS="7200"
 npm run media-worker:usb4-validate
 ```
 
-## 5. 本阶段停止条件
+## 6. 本阶段停止条件
 
 必须停止并先处理问题的情况：
 
@@ -226,12 +280,12 @@ npm run media-worker:usb4-validate
 - `npm run media-worker:usb4-validate` 在 4 路硬件接入后仍返回 `blocked` 或 `failed`。
 - 4 路 30 分钟验证中任一路黑屏、无帧、错路或设备掉线。
 
-## 6. 下一步
+## 7. 下一步
 
 建议顺序：
 
 1. 准备真实 LiveKit server 和服务端 API key/secret。
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 进入 WASAPI 音频格式探测和短时音频 buffer 采集验证。
-5. 进入 Media Foundation 连续帧循环和帧率统计，不做 WebView IPC 传帧。
+4. 进入 Media Foundation 连续帧循环和帧率统计，不做 WebView IPC 传帧。
+5. 进入 WASAPI 连续音频采集线程、重采样/AEC 边界验证和音频统计上报。

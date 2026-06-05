@@ -5,14 +5,16 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 ## Current Scope
 
 - JSON Lines control plane over stdin/stdout.
-- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `start`, `stop`, `status`, `shutdown`.
+- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `status`, `shutdown`.
 - `listDevices` uses Windows native enumeration when available:
   - Video: Media Foundation device source enumeration.
   - Audio capture: WASAPI/Core Audio endpoint enumeration.
 - Mock fallback is still available when native enumeration fails.
 - Channel start/stop state is still mock-native only.
 - `captureVideoSample` verifies a single Media Foundation sample read only.
-- No continuous frame pipeline, WASAPI stream capture, LiveKit native publishing, or real recording yet.
+- `probeAudioFormat` reads WASAPI mix format for capture endpoints.
+- `captureAudioBuffer` verifies short WASAPI capture buffer access and returns packet/frame statistics only.
+- No continuous frame/audio pipeline, AEC processing, LiveKit native publishing, or real recording yet.
 
 ## Run
 
@@ -48,6 +50,21 @@ $env:SMARTST_NATIVE_VIDEO_MAX_ATTEMPTS="60"
 npm run media-worker:native:video-probe
 ```
 
+## Probe Audio Format And Buffer
+
+```powershell
+npm run media-worker:native:audio-probe
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_AUDIO_INDEX="0"
+$env:SMARTST_NATIVE_AUDIO_DURATION_MS="500"
+$env:SMARTST_NATIVE_AUDIO_POLL_INTERVAL_MS="10"
+npm run media-worker:native:audio-probe
+```
+
 ## Smoke Test
 
 ```powershell
@@ -58,6 +75,8 @@ npm run media-worker:native:smoke
 
 The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is intended to become the production worker. High-volume media frames must stay in native pipelines; JSON Lines is only the control and status channel.
 
-`listDevices` still reports device capabilities as `capabilitiesStatus=not-enumerated`. Run `probeVideoCapabilities` or `media-worker:native:video-probe` for Media Foundation media types.
+`listDevices` still reports device capabilities as `capabilitiesStatus=not-enumerated`. Run `probeVideoCapabilities` or `media-worker:native:video-probe` for Media Foundation media types, and run `probeAudioFormat` or `media-worker:native:audio-probe` for WASAPI mix format.
 
 `captureVideoSample` proves the source reader can return one native sample. It does not decode, preview, publish, encode, or record that sample.
+
+`captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
