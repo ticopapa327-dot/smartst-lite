@@ -41,6 +41,9 @@ export function NativeWorkerPanel() {
   const videoThreadCount = session?.captureSession?.continuousVideoThreadCount ?? 0;
   const framesProduced = session?.stats?.framesProduced ?? 0;
   const audioPackets = session?.stats?.audioPacketsProduced ?? 0;
+  const audioPayloadCopyCount = session?.stats?.audioPayloadCopyCount ?? 0;
+  const audioPayloadCopyErrorCount = session?.stats?.audioPayloadCopyErrorCount ?? 0;
+  const audioPayloadQueueBytes = session?.stats?.audioPayloadQueueBytes ?? 0;
   const frameQueuePushCount = session?.stats?.videoFrameQueuePushCount ?? 0;
   const frameQueueDropCount = session?.stats?.videoFrameQueueDropCount ?? 0;
   const payloadCopyCount = session?.stats?.videoPayloadCopyCount ?? 0;
@@ -78,6 +81,7 @@ export function NativeWorkerPanel() {
           startVideoThread: true,
           startAudioThread: true,
           videoFrameQueueCapacity: 3,
+          audioPayloadQueueCapacity: 50,
         }),
       );
     } catch (error) {
@@ -155,6 +159,14 @@ export function NativeWorkerPanel() {
           <Cpu size={18} />
           <strong>{sessionState}</strong>
           <span>{framesProduced} video samples / {audioPackets} audio packets</span>
+        </div>
+        <div className="recording-stat">
+          <Mic size={18} />
+          <strong>{audioPayloadCopyCount} audio copies</strong>
+          <span>
+            {formatBytes(audioPayloadQueueBytes)} native PCM
+            {audioPayloadCopyErrorCount > 0 ? ` / ${audioPayloadCopyErrorCount} copy errors` : ""}
+          </span>
         </div>
         <div className="recording-stat">
           <Activity size={18} />

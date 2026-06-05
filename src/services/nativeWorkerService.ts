@@ -39,6 +39,10 @@ export interface NativeWorkerSessionSnapshot {
   stats?: {
     framesProduced?: number;
     audioPacketsProduced?: number;
+    audioPayloadCopyCount?: number;
+    audioPayloadCopyErrorCount?: number;
+    audioPayloadQueueBytes?: number;
+    audioPayloadTotalCopiedBytes?: number;
     videoFrameQueuePushCount?: number;
     videoFrameQueueDropCount?: number;
     videoPayloadCopyCount?: number;
@@ -58,6 +62,7 @@ export interface NativeWorkerStartParams {
   startVideoThread?: boolean;
   startAudioThread?: boolean;
   videoFrameQueueCapacity?: number;
+  audioPayloadQueueCapacity?: number;
 }
 
 export interface NativeWorkerPayloadConsumeParams {
@@ -197,6 +202,10 @@ function idleNativeWorkerSession(): NativeWorkerSessionSnapshot {
     stats: {
       framesProduced: 0,
       audioPacketsProduced: 0,
+      audioPayloadCopyCount: 0,
+      audioPayloadCopyErrorCount: 0,
+      audioPayloadQueueBytes: 0,
+      audioPayloadTotalCopiedBytes: 0,
       videoFrameQueuePushCount: 0,
       videoFrameQueueDropCount: 0,
       videoPayloadCopyCount: 0,

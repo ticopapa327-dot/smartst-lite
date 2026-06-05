@@ -79,7 +79,7 @@ npm run media-worker:native-readiness:smoke
 
 - 已创建 Rust Worker crate。
 - 已移植 `listDevices/start/stop/status` 控制面。
-- 已接入 Media Foundation/WASAPI 设备枚举、连续视频线程、连续 WASAPI 统计线程和 native-only 有界视频 payload 队列。
+- 已接入 Media Foundation/WASAPI 设备枚举、连续视频线程、连续 WASAPI 统计线程、native-only 有界视频 payload 队列和 native-only 有界音频 PCM packet 队列。
 
 控制面骨架实现结果：
 
@@ -93,7 +93,7 @@ npm run media-worker:native-readiness:smoke
 
 - `listDevices` 已接入 Media Foundation 视频设备枚举和 WASAPI/Core Audio 采集端点枚举。
 - 通道 `start/stop/status` 已进入真实采集会话骨架：可绑定当前 Media Foundation 视频设备、WASAPI 音频端点和默认媒体格式，并输出 `captureSession`。
-- 当前 `start` 已默认启动可停止的 Media Foundation 视频线程和 WASAPI 音频统计线程；视频线程已将 SourceReader sample payload 复制到 native-only 有界队列；`consumeVideoPayloadQueue` 可在 native 侧 drain payload 队列并只返回统计；尚未接入预览纹理、AEC、LiveKit native publisher 或真实录像。
+- 当前 `start` 已默认启动可停止的 Media Foundation 视频线程和 WASAPI 音频统计线程；视频线程已将 SourceReader sample payload 复制到 native-only 有界队列；WASAPI 音频线程已将 capture packet PCM 复制到 native-only 有界队列；`consumeVideoPayloadQueue` 可在 native 侧 drain 视频 payload 队列并只返回统计；尚未接入预览纹理、音频重采样、AEC、LiveKit native publisher 或真实录像。
 - JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
 
 真实采集会话骨架验证：
@@ -457,9 +457,41 @@ audioCaptureThread.timestampErrorPackets=0
 stop.join=ok
 ```
 
+WASAPI native audio payload queue 验证：
+
+```powershell
+npm run media-worker:native:smoke
+npm run media-worker:native:session-stress
+```
+
+本机结果：
+
+```text
+测试时间：2026-06-06
+iterations=3
+holdMs=1000
+audioCaptureThread.payloadQueue.mode=pcm-packet-bounded
+audioCaptureThread.payloadQueue.transport=native-only
+audioCaptureThread.payloadQueue.exportedOverJson=false
+iteration[1].audioPackets=94
+iteration[1].audioPayloadCopyCount=94
+iteration[1].audioPayloadQueueBytes=192000
+iteration[2].audioPackets=95
+iteration[2].audioPayloadCopyCount=95
+iteration[2].audioPayloadQueueBytes=192000
+iteration[3].audioPackets=95
+iteration[3].audioPayloadCopyCount=95
+iteration[3].audioPayloadQueueBytes=192000
+audioPayloadCopyErrorCount=0
+audioLevel.status=measured
+audioLevel.format=float32
+stoppedState=idle
+```
+
 边界：
 
-- 该线程只做 WASAPI capture buffer 读取、packet 统计和 RMS/peak 音量统计，尚未做重采样、环形缓冲、AEC、发布、编码或录像。
+- 该线程只做 WASAPI capture buffer 读取、packet 统计、native-only 有界 PCM payload copy 和 RMS/peak 音量统计，尚未做重采样、AEC、发布、编码或录像。
+- 当前只开放音频 payload queue 统计，尚未提供 `consumeAudioPayloadQueue`；后续消费者必须仍保持 native-side 传递，不得把 PCM payload 通过 JSON Lines 返回。
 - 当前音量数值只代表本机测试环境输入电平，不作为验收阈值；后续需要增加静音、讲话声和外接全向麦的对比样本。
 - `stop` 会设置停止标志并 join 线程；`shutdown` 在 worker 仍运行时也会先清理会话。
 
@@ -494,7 +526,7 @@ cargoVersion=<cargo --version>
 - `probe_native_worker_devices` 会启动 Native Worker 子进程，等待 `worker.ready`，发送 `listDevices`，随后发送 `shutdown` 并清理进程；该命令只枚举 Media Foundation/WASAPI 设备，不执行 `start`，不打开连续采集线程。
 - 工作台新增 `Device Probe` 面板，用户手动点击 `Probe devices` 后才调用 `probe_native_worker_devices`，显示视频/音频枚举数量和设备来源。
 - 工作台新增手动 `Start session`、`Status`、`Drain payload`、`Stop` 控件；`Start session` 会按默认 `field-camera,endoscope` 参数启动 Native Worker `start`，并返回 `framesProduced`、`audioPacketsProduced` 等统计；`Drain payload` 调用 Tauri `consume_native_worker_video_payload_queue`，只 drain native queue 并刷新统计。
-- start/status/drain/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、native payload queue bytes/copy 和 payload consumed 展示；该展示仍只来自 JSON 控制面状态，不承载媒体 payload。
+- start/status/drain/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、视频 native payload queue bytes/copy、payload consumed 和音频 native PCM queue bytes/copy 展示；该展示仍只来自 JSON 控制面状态，不承载媒体 payload。
 - Tauri 持有的 Native Worker session 在 runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。
 
 验证：
@@ -504,13 +536,14 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path native-worker/Cargo.toml
 npm run media-worker:native:session
+npm run media-worker:native:smoke
 npm run media-worker:native:session-stress
 npm run media-worker:native:payload-consume
 npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 4 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；新增 Tauri/UI drain 控制后 `npm run test:all:poc` 完整回归耗时约 35-36 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 4 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run test:all:poc` 完整回归耗时约 35.2 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 
@@ -593,5 +626,5 @@ npm run media-worker:usb4-validate
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
 4. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 native payload frameQueue。
-5. 进入 WASAPI 静音/讲话/外接全向麦对比样本、重采样和 AEC 边界验证。
-6. 将 Native Worker readiness 入口推进到真实 start/status/drain/stop 控制面板，不通过 UI 直接传输媒体 payload。
+5. 增加 `consumeAudioPayloadQueue` 或等价 native-side 音频消费者验证，继续保持 JSON Lines 只返回统计。
+6. 进入 WASAPI 静音/讲话/外接全向麦对比样本、重采样和 AEC 边界验证。

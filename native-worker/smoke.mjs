@@ -93,6 +93,13 @@ try {
   if (started.captureSession?.boundAudioEndpoints > 0) {
     assert(status.stats?.audioCaptureThread, "status reports audio capture thread stats");
     assert(["starting", "initializing", "running", "stopped", "failed"].includes(status.stats.audioCaptureThread.state), "audio thread state is explicit");
+    assert(status.stats.audioCaptureThread.payloadQueue, "audio payload queue stats are reported");
+    assert(status.stats.audioCaptureThread.payloadQueue.mode === "pcm-packet-bounded", "audio payload queue mode is explicit");
+    assert(status.stats.audioCaptureThread.payloadQueue.transport === "native-only", "audio payload queue keeps payload native-only");
+    assert(status.stats.audioCaptureThread.payloadQueue.exportedOverJson === false, "audio payload is not exported through JSON");
+    assert(Number.isInteger(status.stats.audioCaptureThread.payloadQueue.copyCount), "audio payload copy count is reported");
+    assert(Number.isInteger(status.stats.audioPayloadCopyCount), "audio payload copy aggregate is reported");
+    assert(Number.isInteger(status.stats.audioPayloadQueueBytes), "audio payload byte aggregate is reported");
     assert(status.stats.audioCaptureThread.audioLevel, "audio level stats are reported");
     assert(["not-started", "waiting-for-packets", "measured", "unsupported-format"].includes(status.stats.audioCaptureThread.audioLevel.status), "audio level status is explicit");
     assert(typeof status.stats.audioCaptureThread.audioLevel.format === "string", "audio level format is explicit");

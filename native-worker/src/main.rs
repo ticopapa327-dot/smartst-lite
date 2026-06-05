@@ -84,6 +84,7 @@ struct CaptureSessionStart {
 struct AudioCaptureRuntime {
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<AudioCaptureThreadStats>>,
+    _payload_queue: Arc<Mutex<AudioPayloadQueue>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -119,6 +120,17 @@ struct AudioCaptureThreadStats {
     audio_level_last_peak: Option<f64>,
     audio_level_last_packet_frames: Option<u32>,
     audio_level_unsupported_packets: u64,
+    payload_queue_capacity: u32,
+    payload_queue_depth: u32,
+    payload_queue_bytes: u64,
+    payload_queue_copy_count: u64,
+    payload_queue_copy_error_count: u64,
+    payload_queue_drop_count: u64,
+    payload_queue_total_copied_bytes: u64,
+    payload_queue_dropped_bytes: u64,
+    payload_queue_latest_bytes: Option<u32>,
+    payload_queue_latest_sequence: Option<u64>,
+    payload_queue_consumer_status: String,
     poll_count: u64,
     last_device_position: Option<u64>,
     last_qpc_position: Option<u64>,
@@ -127,6 +139,27 @@ struct AudioCaptureThreadStats {
     device: Value,
     mix_format: Value,
     last_error: Option<String>,
+}
+
+struct AudioPayloadQueue {
+    packets: VecDeque<AudioPayloadPacket>,
+    bytes: u64,
+}
+
+struct AudioPayloadPacket {
+    sequence: u64,
+    device_position: Option<u64>,
+    qpc_position: Option<u64>,
+    frames: u32,
+    payload: Vec<u8>,
+}
+
+struct AudioPayloadQueuePush {
+    depth: u32,
+    bytes: u64,
+    payload_bytes: u32,
+    dropped_packet: bool,
+    dropped_bytes: u64,
 }
 
 #[derive(Clone)]
@@ -283,6 +316,48 @@ impl VideoPayloadQueue {
             latest_total_length_bytes,
             remaining_depth: self.frames.len() as u32,
             remaining_bytes: self.bytes,
+        }
+    }
+}
+
+impl AudioPayloadQueue {
+    fn new() -> Self {
+        Self {
+            packets: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
+    fn push(&mut self, packet: AudioPayloadPacket, capacity: u32) -> AudioPayloadQueuePush {
+        let capacity = capacity.max(1) as usize;
+        let mut dropped_packet = false;
+        let mut dropped_bytes = 0u64;
+        while self.packets.len() >= capacity {
+            if let Some(dropped) = self.packets.pop_front() {
+                dropped_packet = true;
+                dropped_bytes = dropped_bytes.saturating_add(dropped.payload.len() as u64);
+                self.bytes = self.bytes.saturating_sub(dropped.payload.len() as u64);
+            } else {
+                break;
+            }
+        }
+
+        let _packet_metadata = (
+            packet.sequence,
+            packet.device_position,
+            packet.qpc_position,
+            packet.frames,
+        );
+        let payload_bytes = u32::try_from(packet.payload.len()).unwrap_or(u32::MAX);
+        self.bytes = self.bytes.saturating_add(packet.payload.len() as u64);
+        self.packets.push_back(packet);
+
+        AudioPayloadQueuePush {
+            depth: self.packets.len() as u32,
+            bytes: self.bytes,
+            payload_bytes,
+            dropped_packet,
+            dropped_bytes,
         }
     }
 }
@@ -492,7 +567,16 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
             .flatten()
             .unwrap_or(10)
             .clamp(1, 100);
-        state.audio_runtime = Some(start_audio_capture_runtime(audio_index, poll_interval_ms));
+        let audio_payload_queue_capacity = optional_u32(&params, "audioPayloadQueueCapacity")
+            .ok()
+            .flatten()
+            .unwrap_or(50)
+            .clamp(1, 500);
+        state.audio_runtime = Some(start_audio_capture_runtime(
+            audio_index,
+            poll_interval_ms,
+            audio_payload_queue_capacity,
+        ));
         state.capture_session["continuousAudioThreads"] = json!("running");
     }
 
@@ -703,6 +787,10 @@ fn build_capture_session_start(
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
+        "audioPayloadCopyCount": 0,
+        "audioPayloadCopyErrorCount": 0,
+        "audioPayloadQueueBytes": 0,
+        "audioPayloadTotalCopiedBytes": 0,
         "syntheticFramesProduced": 0,
         "boundVideoChannels": bound_video_channels,
         "unassignedVideoChannels": unassigned_video_channels,
@@ -939,6 +1027,10 @@ fn mock_capture_session_start(
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
+        "audioPayloadCopyCount": 0,
+        "audioPayloadCopyErrorCount": 0,
+        "audioPayloadQueueBytes": 0,
+        "audioPayloadTotalCopiedBytes": 0,
         "syntheticFramesProduced": 0,
         "boundVideoChannels": 0,
         "unassignedVideoChannels": 0,
@@ -1445,20 +1537,35 @@ fn should_start_audio_thread(params: &Value, capture_session: &Value) -> bool {
     enabled && bound_audio
 }
 
-fn start_audio_capture_runtime(audio_index: u32, poll_interval_ms: u32) -> AudioCaptureRuntime {
+fn start_audio_capture_runtime(
+    audio_index: u32,
+    poll_interval_ms: u32,
+    payload_queue_capacity: u32,
+) -> AudioCaptureRuntime {
     let stop = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(Mutex::new(AudioCaptureThreadStats::new(
         audio_index,
         poll_interval_ms,
+        payload_queue_capacity,
     )));
+    let payload_queue = Arc::new(Mutex::new(AudioPayloadQueue::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_stats = Arc::clone(&stats);
+    let thread_payload_queue = Arc::clone(&payload_queue);
     let handle = thread::spawn(move || {
-        run_audio_capture_thread(audio_index, poll_interval_ms, thread_stop, thread_stats);
+        run_audio_capture_thread(
+            audio_index,
+            poll_interval_ms,
+            payload_queue_capacity,
+            thread_stop,
+            thread_stats,
+            thread_payload_queue,
+        );
     });
     AudioCaptureRuntime {
         stop,
         stats,
+        _payload_queue: payload_queue,
         handle: Some(handle),
     }
 }
@@ -1481,8 +1588,10 @@ fn stop_audio_capture_runtime(state: &mut WorkerState) -> Option<Value> {
 fn run_audio_capture_thread(
     audio_index: u32,
     poll_interval_ms: u32,
+    payload_queue_capacity: u32,
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<AudioCaptureThreadStats>>,
+    payload_queue: Arc<Mutex<AudioPayloadQueue>>,
 ) {
     let started = Instant::now();
     update_audio_stats(&stats, |stats| {
@@ -1577,9 +1686,16 @@ fn run_audio_capture_thread(
                                 flags,
                                 format_ptr,
                             );
+                            let payload_copy = copy_audio_packet_payload(
+                                data_ptr as *const u8,
+                                frames_to_read,
+                                flags,
+                                block_align,
+                            );
                             update_audio_stats(&stats, |stats| {
                                 let frame_count = u64::from(frames_to_read);
                                 stats.packet_count = stats.packet_count.saturating_add(1);
+                                let packet_sequence = stats.packet_count;
                                 stats.captured_frames =
                                     stats.captured_frames.saturating_add(frame_count);
                                 stats.captured_bytes = stats
@@ -1605,6 +1721,57 @@ fn run_audio_capture_thread(
                                 stats.last_device_position = Some(device_position);
                                 stats.last_qpc_position = Some(qpc_position);
                                 apply_audio_level_packet(stats, audio_level);
+                                match payload_copy {
+                                    Ok(payload) => {
+                                        let packet = AudioPayloadPacket {
+                                            sequence: packet_sequence,
+                                            device_position: Some(device_position),
+                                            qpc_position: Some(qpc_position),
+                                            frames: frames_to_read,
+                                            payload,
+                                        };
+                                        let push = payload_queue.lock().map(|mut queue| {
+                                            queue.push(packet, payload_queue_capacity)
+                                        });
+                                        match push {
+                                            Ok(push) => {
+                                                stats.payload_queue_depth = push.depth;
+                                                stats.payload_queue_bytes = push.bytes;
+                                                stats.payload_queue_copy_count = stats
+                                                    .payload_queue_copy_count
+                                                    .saturating_add(1);
+                                                stats.payload_queue_total_copied_bytes = stats
+                                                    .payload_queue_total_copied_bytes
+                                                    .saturating_add(u64::from(push.payload_bytes));
+                                                stats.payload_queue_latest_bytes =
+                                                    Some(push.payload_bytes);
+                                                stats.payload_queue_latest_sequence =
+                                                    Some(packet_sequence);
+                                                if push.dropped_packet {
+                                                    stats.payload_queue_drop_count = stats
+                                                        .payload_queue_drop_count
+                                                        .saturating_add(1);
+                                                    stats.payload_queue_dropped_bytes = stats
+                                                        .payload_queue_dropped_bytes
+                                                        .saturating_add(push.dropped_bytes);
+                                                }
+                                            }
+                                            Err(_) => {
+                                                stats.payload_queue_copy_error_count = stats
+                                                    .payload_queue_copy_error_count
+                                                    .saturating_add(1);
+                                                stats.last_error = Some(
+                                                    "audio payload queue lock poisoned".to_string(),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(error) => {
+                                        stats.payload_queue_copy_error_count =
+                                            stats.payload_queue_copy_error_count.saturating_add(1);
+                                        stats.last_error = Some(error);
+                                    }
+                                }
                                 stats.elapsed_ms = started.elapsed().as_millis();
                             });
                             unsafe {
@@ -1658,6 +1825,29 @@ fn update_audio_stats(
     if let Ok(mut stats) = stats.lock() {
         update(&mut stats);
     }
+}
+
+fn copy_audio_packet_payload(
+    data_ptr: *const u8,
+    frames_to_read: u32,
+    flags: u32,
+    block_align: u64,
+) -> Result<Vec<u8>, String> {
+    let byte_count = u64::from(frames_to_read).saturating_mul(block_align);
+    let Ok(byte_count) = usize::try_from(byte_count) else {
+        return Err("audio packet payload is too large".to_string());
+    };
+    if byte_count == 0 {
+        return Ok(Vec::new());
+    }
+    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_SILENT.0) {
+        return Ok(vec![0; byte_count]);
+    }
+    if data_ptr.is_null() {
+        return Err("IAudioCaptureClient::GetBuffer returned a null data pointer".to_string());
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(data_ptr, byte_count) };
+    Ok(bytes.to_vec())
 }
 
 fn apply_audio_level_packet(
@@ -1901,7 +2091,7 @@ impl AudioCaptureRuntime {
 }
 
 impl AudioCaptureThreadStats {
-    fn new(device_index: u32, poll_interval_ms: u32) -> Self {
+    fn new(device_index: u32, poll_interval_ms: u32, payload_queue_capacity: u32) -> Self {
         Self {
             state: "starting".to_string(),
             started_at: now_iso_like(),
@@ -1925,6 +2115,17 @@ impl AudioCaptureThreadStats {
             audio_level_last_peak: None,
             audio_level_last_packet_frames: None,
             audio_level_unsupported_packets: 0,
+            payload_queue_capacity,
+            payload_queue_depth: 0,
+            payload_queue_bytes: 0,
+            payload_queue_copy_count: 0,
+            payload_queue_copy_error_count: 0,
+            payload_queue_drop_count: 0,
+            payload_queue_total_copied_bytes: 0,
+            payload_queue_dropped_bytes: 0,
+            payload_queue_latest_bytes: None,
+            payload_queue_latest_sequence: None,
+            payload_queue_consumer_status: "not-attached".to_string(),
             poll_count: 0,
             last_device_position: None,
             last_qpc_position: None,
@@ -1958,6 +2159,24 @@ fn stats_with_runtimes(
             .get("capturedBytes")
             .cloned()
             .unwrap_or_else(|| json!(0));
+        if let Some(payload_queue) = audio_stats.get("payloadQueue") {
+            stats["audioPayloadCopyCount"] = payload_queue
+                .get("copyCount")
+                .cloned()
+                .unwrap_or_else(|| json!(0));
+            stats["audioPayloadCopyErrorCount"] = payload_queue
+                .get("copyErrorCount")
+                .cloned()
+                .unwrap_or_else(|| json!(0));
+            stats["audioPayloadQueueBytes"] = payload_queue
+                .get("bytes")
+                .cloned()
+                .unwrap_or_else(|| json!(0));
+            stats["audioPayloadTotalCopiedBytes"] = payload_queue
+                .get("totalCopiedBytes")
+                .cloned()
+                .unwrap_or_else(|| json!(0));
+        }
     }
     if !video_runtimes.is_empty() {
         let video_stats = video_runtimes
@@ -2099,6 +2318,22 @@ fn audio_capture_thread_stats_to_json(stats: &AudioCaptureThreadStats) -> Value 
             "lastPacketPeak": stats.audio_level_last_peak,
             "lastPacketFrames": stats.audio_level_last_packet_frames,
             "unsupportedPackets": stats.audio_level_unsupported_packets
+        },
+        "payloadQueue": {
+            "mode": "pcm-packet-bounded",
+            "transport": "native-only",
+            "exportedOverJson": false,
+            "consumerStatus": stats.payload_queue_consumer_status.clone(),
+            "capacity": stats.payload_queue_capacity,
+            "depth": stats.payload_queue_depth,
+            "bytes": stats.payload_queue_bytes,
+            "copyCount": stats.payload_queue_copy_count,
+            "copyErrorCount": stats.payload_queue_copy_error_count,
+            "dropCount": stats.payload_queue_drop_count,
+            "totalCopiedBytes": stats.payload_queue_total_copied_bytes,
+            "droppedBytes": stats.payload_queue_dropped_bytes,
+            "latestBytes": stats.payload_queue_latest_bytes,
+            "latestSequence": stats.payload_queue_latest_sequence
         },
         "pollCount": stats.poll_count,
         "lastDevicePosition": stats.last_device_position,
@@ -3507,6 +3742,10 @@ fn idle_stats() -> Value {
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
+        "audioPayloadCopyCount": 0,
+        "audioPayloadCopyErrorCount": 0,
+        "audioPayloadQueueBytes": 0,
+        "audioPayloadTotalCopiedBytes": 0,
         "syntheticFramesProduced": 0,
         "boundVideoChannels": 0,
         "unassignedVideoChannels": 0,

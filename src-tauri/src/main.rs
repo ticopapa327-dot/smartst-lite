@@ -1451,7 +1451,8 @@ fn default_native_worker_start_params() -> Value {
         "audioIndex": 0,
         "startVideoThread": true,
         "startAudioThread": true,
-        "videoFrameQueueCapacity": 3
+        "videoFrameQueueCapacity": 3,
+        "audioPayloadQueueCapacity": 50
     })
 }
 
@@ -1883,6 +1884,7 @@ mod tests {
         assert_eq!(params["startVideoThread"], json!(true));
         assert_eq!(params["startAudioThread"], json!(true));
         assert_eq!(params["videoFrameQueueCapacity"], json!(3));
+        assert_eq!(params["audioPayloadQueueCapacity"], json!(50));
     }
 
     #[test]

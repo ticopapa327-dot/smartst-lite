@@ -13,6 +13,7 @@ const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDE
 const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
 const videoFrameQueueCapacity = readIntegerEnv("SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", undefined);
 const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
+const audioPayloadQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", undefined);
 const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 500);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
@@ -73,6 +74,7 @@ try {
     audioIndex,
     startVideoThread: true,
     startAudioThread: true,
+    ...(audioPayloadQueueCapacity === undefined ? {} : { audioPayloadQueueCapacity }),
   });
   await new Promise((resolve) => setTimeout(resolve, holdMs));
   const status = await request("status");

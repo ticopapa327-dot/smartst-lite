@@ -15,6 +15,7 @@ const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDE
 const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
 const videoFrameQueueCapacity = readIntegerEnv("SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", undefined);
 const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
+const audioPayloadQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", undefined);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,
@@ -75,6 +76,7 @@ try {
       ...(videoThreadLimit === undefined ? {} : { videoThreadLimit }),
       ...(videoFrameQueueCapacity === undefined ? {} : { videoFrameQueueCapacity }),
       audioIndex,
+      ...(audioPayloadQueueCapacity === undefined ? {} : { audioPayloadQueueCapacity }),
       startVideoThread: true,
       startAudioThread: true,
     });
@@ -109,6 +111,10 @@ try {
     if (started.captureSession?.boundAudioEndpoints > 0) {
       assert(audioThread?.state === "running", `iteration ${iteration}: audio thread running`);
       assert(audioThread.packetCount > 0, `iteration ${iteration}: audio packets captured`);
+      assert(audioThread.payloadQueue?.mode === "pcm-packet-bounded", `iteration ${iteration}: audio payload queue mode reported`);
+      assert(audioThread.payloadQueue.copyCount === audioThread.packetCount, `iteration ${iteration}: audio payload copy count matches packets`);
+      assert(audioThread.payloadQueue.copyErrorCount === 0, `iteration ${iteration}: audio payload copy has no errors`);
+      assert(audioThread.payloadQueue.bytes > 0, `iteration ${iteration}: audio payload queue keeps native bytes`);
       assert(audioThread.audioLevel, `iteration ${iteration}: audio level stats reported`);
       assert(["measured", "unsupported-format"].includes(audioThread.audioLevel.status), `iteration ${iteration}: audio level status terminal`);
       if (audioThread.audioLevel.status === "measured") {
@@ -145,6 +151,8 @@ try {
       audioState: audioThread?.state ?? null,
       audioPackets: audioThread?.packetCount ?? 0,
       audioFrames: audioThread?.capturedFrames ?? 0,
+      audioPayloadCopyCount: audioThread?.payloadQueue?.copyCount ?? 0,
+      audioPayloadQueueBytes: audioThread?.payloadQueue?.bytes ?? 0,
       audioLevel: audioThread?.audioLevel ?? null,
       stoppedState: stopped.captureSession?.state,
     });
