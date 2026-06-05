@@ -306,6 +306,7 @@
   - 已增加 `probeAudioFormat` 和 `captureAudioBuffer`，可验证 WASAPI mix format 和短时 capture buffer 读取。
   - 当前已接入多路视频统计线程结构、metadata-only 有界帧队列统计、WASAPI RMS/peak 音量统计和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入真实帧 payload 队列、预览纹理、音频重采样/AEC、LiveKit native publisher 或真实录像。
   - 桌面端已新增 Native Worker readiness 诊断入口、工作台状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；`probe_native_worker_devices` 只通过 Native Worker 执行 `listDevices` 枚举，不执行 `start`，不启动连续采集线程；start/status/stop 控件只展示 JSON 状态统计，不传输媒体 payload。
+  - Tauri 持有的 Native Worker session 已增加 Drop 清理，runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。
 - 阻塞：
   - 当前 4 路摄像头基础链路可打开，但不满足 4 路 30fps 实时验收；按当前阶段决策，该性能降级只记录为开发机限制，不阻塞后续 Native Worker 开发。
   - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。

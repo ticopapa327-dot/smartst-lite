@@ -116,6 +116,14 @@ struct NativeWorkerProcess {
     line_receiver: mpsc::Receiver<String>,
 }
 
+impl Drop for NativeWorkerProcess {
+    fn drop(&mut self) {
+        let _ = write_native_worker_request(&mut self.stdin, "shutdown", "shutdown", Value::Null);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[derive(Default)]
 struct PreviewRuntime {
     server_port: Option<u16>,
