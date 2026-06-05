@@ -100,6 +100,13 @@ try {
     if (started.captureSession?.boundAudioEndpoints > 0) {
       assert(audioThread?.state === "running", `iteration ${iteration}: audio thread running`);
       assert(audioThread.packetCount > 0, `iteration ${iteration}: audio packets captured`);
+      assert(audioThread.audioLevel, `iteration ${iteration}: audio level stats reported`);
+      assert(["measured", "unsupported-format"].includes(audioThread.audioLevel.status), `iteration ${iteration}: audio level status terminal`);
+      if (audioThread.audioLevel.status === "measured") {
+        assert(audioThread.audioLevel.sampleCount > 0, `iteration ${iteration}: audio level samples measured`);
+        assert(audioThread.audioLevel.rms !== null, `iteration ${iteration}: audio RMS reported`);
+        assert(audioThread.audioLevel.peak >= 0, `iteration ${iteration}: audio peak reported`);
+      }
     }
 
     const stopped = await request("stop");
@@ -127,6 +134,7 @@ try {
       audioState: audioThread?.state ?? null,
       audioPackets: audioThread?.packetCount ?? 0,
       audioFrames: audioThread?.capturedFrames ?? 0,
+      audioLevel: audioThread?.audioLevel ?? null,
       stoppedState: stopped.captureSession?.state,
     });
   }

@@ -84,6 +84,9 @@ try {
   if (started.captureSession?.boundAudioEndpoints > 0) {
     assert(status.stats?.audioCaptureThread, "status reports audio capture thread stats");
     assert(["starting", "initializing", "running", "stopped", "failed"].includes(status.stats.audioCaptureThread.state), "audio thread state is explicit");
+    assert(status.stats.audioCaptureThread.audioLevel, "audio level stats are reported");
+    assert(["not-started", "waiting-for-packets", "measured", "unsupported-format"].includes(status.stats.audioCaptureThread.audioLevel.status), "audio level status is explicit");
+    assert(typeof status.stats.audioCaptureThread.audioLevel.format === "string", "audio level format is explicit");
   }
   assert(status.livekit.requiresNativeSdk === true, "native SDK boundary is explicit");
 

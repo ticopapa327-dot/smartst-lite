@@ -106,6 +106,16 @@ struct AudioCaptureThreadStats {
     silent_packets: u64,
     discontinuity_packets: u64,
     timestamp_error_packets: u64,
+    audio_level_status: String,
+    audio_level_format: String,
+    audio_level_sample_count: u64,
+    audio_level_frame_count: u64,
+    audio_level_sum_squares: f64,
+    audio_level_peak: f64,
+    audio_level_last_rms: Option<f64>,
+    audio_level_last_peak: Option<f64>,
+    audio_level_last_packet_frames: Option<u32>,
+    audio_level_unsupported_packets: u64,
     poll_count: u64,
     last_device_position: Option<u64>,
     last_qpc_position: Option<u64>,
@@ -150,6 +160,15 @@ struct VideoCaptureThreadStats {
     device: Value,
     media_type: Value,
     last_error: Option<String>,
+}
+
+struct AudioLevelPacketMeasurement {
+    status: &'static str,
+    format: &'static str,
+    frame_count: u64,
+    sample_count: u64,
+    sum_squares: f64,
+    peak: f64,
 }
 
 impl WorkerState {
@@ -1183,10 +1202,17 @@ fn run_audio_capture_thread(
                 let mix_format = wave_format_to_json(format_ptr)?;
                 let format = unsafe { *format_ptr };
                 let block_align = u64::from(format.nBlockAlign.max(1));
+                let audio_level_format = audio_level_format_label(format_ptr);
                 update_audio_stats(&stats, |stats| {
                     stats.state = "starting".to_string();
                     stats.device = audio_device_record_to_json(record);
                     stats.mix_format = mix_format.clone();
+                    stats.audio_level_format = audio_level_format.to_string();
+                    stats.audio_level_status = if audio_level_format == "unsupported" {
+                        "unsupported-format".to_string()
+                    } else {
+                        "waiting-for-packets".to_string()
+                    };
                 });
                 unsafe {
                     audio_client
@@ -1242,6 +1268,12 @@ fn run_audio_capture_thread(
                                     )
                                     .map_err(format_windows_error)?;
                             }
+                            let audio_level = measure_audio_level_packet(
+                                data_ptr as *const u8,
+                                frames_to_read,
+                                flags,
+                                format_ptr,
+                            );
                             update_audio_stats(&stats, |stats| {
                                 let frame_count = u64::from(frames_to_read);
                                 stats.packet_count = stats.packet_count.saturating_add(1);
@@ -1269,6 +1301,7 @@ fn run_audio_capture_thread(
                                 }
                                 stats.last_device_position = Some(device_position);
                                 stats.last_qpc_position = Some(qpc_position);
+                                apply_audio_level_packet(stats, audio_level);
                                 stats.elapsed_ms = started.elapsed().as_millis();
                             });
                             unsafe {
@@ -1324,6 +1357,228 @@ fn update_audio_stats(
     }
 }
 
+fn apply_audio_level_packet(
+    stats: &mut AudioCaptureThreadStats,
+    packet: AudioLevelPacketMeasurement,
+) {
+    stats.audio_level_format = packet.format.to_string();
+    if packet.status == "unsupported-format" {
+        stats.audio_level_status = "unsupported-format".to_string();
+        stats.audio_level_unsupported_packets =
+            stats.audio_level_unsupported_packets.saturating_add(1);
+        stats.audio_level_last_packet_frames =
+            Some(u32::try_from(packet.frame_count).unwrap_or(u32::MAX));
+        return;
+    }
+    stats.audio_level_status = packet.status.to_string();
+    stats.audio_level_sample_count = stats
+        .audio_level_sample_count
+        .saturating_add(packet.sample_count);
+    stats.audio_level_frame_count = stats
+        .audio_level_frame_count
+        .saturating_add(packet.frame_count);
+    stats.audio_level_sum_squares += packet.sum_squares;
+    stats.audio_level_peak = stats.audio_level_peak.max(packet.peak);
+    stats.audio_level_last_rms = if packet.sample_count > 0 {
+        Some((packet.sum_squares / packet.sample_count as f64).sqrt())
+    } else {
+        Some(0.0)
+    };
+    stats.audio_level_last_peak = Some(packet.peak);
+    stats.audio_level_last_packet_frames =
+        Some(u32::try_from(packet.frame_count).unwrap_or(u32::MAX));
+}
+
+fn measure_audio_level_packet(
+    data_ptr: *const u8,
+    frames_to_read: u32,
+    flags: u32,
+    format_ptr: *const WAVEFORMATEX,
+) -> AudioLevelPacketMeasurement {
+    let format_label = audio_level_format_label(format_ptr);
+    let format = unsafe { *format_ptr };
+    let channels = u64::from(format.nChannels.max(1));
+    let frame_count = u64::from(frames_to_read);
+    let sample_count = frame_count.saturating_mul(channels);
+    if frames_to_read == 0 || sample_count == 0 {
+        return AudioLevelPacketMeasurement {
+            status: "measured",
+            format: format_label,
+            frame_count,
+            sample_count: 0,
+            sum_squares: 0.0,
+            peak: 0.0,
+        };
+    }
+    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_SILENT.0) {
+        return AudioLevelPacketMeasurement {
+            status: "measured",
+            format: format_label,
+            frame_count,
+            sample_count,
+            sum_squares: 0.0,
+            peak: 0.0,
+        };
+    }
+    if data_ptr.is_null() || format_label == "unsupported" {
+        return AudioLevelPacketMeasurement {
+            status: "unsupported-format",
+            format: format_label,
+            frame_count,
+            sample_count: 0,
+            sum_squares: 0.0,
+            peak: 0.0,
+        };
+    }
+    let Ok(sample_count_usize) = usize::try_from(sample_count) else {
+        return AudioLevelPacketMeasurement {
+            status: "unsupported-format",
+            format: "too-many-samples",
+            frame_count,
+            sample_count: 0,
+            sum_squares: 0.0,
+            peak: 0.0,
+        };
+    };
+
+    match format_label {
+        "float32" => {
+            measure_f32_audio_samples(data_ptr.cast::<f32>(), sample_count_usize, frame_count)
+        }
+        "pcm16" => {
+            measure_i16_audio_samples(data_ptr.cast::<i16>(), sample_count_usize, frame_count)
+        }
+        "pcm32" => {
+            measure_i32_audio_samples(data_ptr.cast::<i32>(), sample_count_usize, frame_count)
+        }
+        _ => AudioLevelPacketMeasurement {
+            status: "unsupported-format",
+            format: format_label,
+            frame_count,
+            sample_count: 0,
+            sum_squares: 0.0,
+            peak: 0.0,
+        },
+    }
+}
+
+fn measure_f32_audio_samples(
+    data_ptr: *const f32,
+    sample_count: usize,
+    frame_count: u64,
+) -> AudioLevelPacketMeasurement {
+    let samples = unsafe { std::slice::from_raw_parts(data_ptr, sample_count) };
+    let mut sum_squares = 0.0f64;
+    let mut peak = 0.0f64;
+    for sample in samples {
+        let value = if sample.is_finite() {
+            f64::from(*sample).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let abs = value.abs();
+        peak = peak.max(abs);
+        sum_squares += value * value;
+    }
+    AudioLevelPacketMeasurement {
+        status: "measured",
+        format: "float32",
+        frame_count,
+        sample_count: sample_count as u64,
+        sum_squares,
+        peak,
+    }
+}
+
+fn measure_i16_audio_samples(
+    data_ptr: *const i16,
+    sample_count: usize,
+    frame_count: u64,
+) -> AudioLevelPacketMeasurement {
+    let samples = unsafe { std::slice::from_raw_parts(data_ptr, sample_count) };
+    let mut sum_squares = 0.0f64;
+    let mut peak = 0.0f64;
+    for sample in samples {
+        let value = f64::from(*sample) / 32768.0;
+        let abs = value.abs();
+        peak = peak.max(abs);
+        sum_squares += value * value;
+    }
+    AudioLevelPacketMeasurement {
+        status: "measured",
+        format: "pcm16",
+        frame_count,
+        sample_count: sample_count as u64,
+        sum_squares,
+        peak,
+    }
+}
+
+fn measure_i32_audio_samples(
+    data_ptr: *const i32,
+    sample_count: usize,
+    frame_count: u64,
+) -> AudioLevelPacketMeasurement {
+    let samples = unsafe { std::slice::from_raw_parts(data_ptr, sample_count) };
+    let mut sum_squares = 0.0f64;
+    let mut peak = 0.0f64;
+    for sample in samples {
+        let value = f64::from(*sample) / 2_147_483_648.0;
+        let abs = value.abs();
+        peak = peak.max(abs);
+        sum_squares += value * value;
+    }
+    AudioLevelPacketMeasurement {
+        status: "measured",
+        format: "pcm32",
+        frame_count,
+        sample_count: sample_count as u64,
+        sum_squares,
+        peak,
+    }
+}
+
+fn audio_level_format_label(format_ptr: *const WAVEFORMATEX) -> &'static str {
+    if format_ptr.is_null() {
+        return "unsupported";
+    }
+    let format = unsafe { *format_ptr };
+    let format_tag = effective_wave_format_tag(format_ptr).unwrap_or(format.wFormatTag);
+    match (format_tag, format.wBitsPerSample) {
+        (WAVE_FORMAT_IEEE_FLOAT_TAG, 32) => "float32",
+        (WAVE_FORMAT_PCM_TAG, 16) => "pcm16",
+        (WAVE_FORMAT_PCM_TAG, 32) => "pcm32",
+        _ => "unsupported",
+    }
+}
+
+fn effective_wave_format_tag(format_ptr: *const WAVEFORMATEX) -> Option<u16> {
+    if format_ptr.is_null() {
+        return None;
+    }
+    let format = unsafe { *format_ptr };
+    if format.wFormatTag != WAVE_FORMAT_EXTENSIBLE_TAG {
+        return Some(format.wFormatTag);
+    }
+    let extensible_extra_size =
+        std::mem::size_of::<WAVEFORMATEXTENSIBLE>() - std::mem::size_of::<WAVEFORMATEX>();
+    if usize::from(format.cbSize) < extensible_extra_size {
+        return None;
+    }
+    let extensible = unsafe { *(format_ptr.cast::<WAVEFORMATEXTENSIBLE>()) };
+    let sub_format = extensible.SubFormat;
+    wave_subformat_tag(&sub_format)
+}
+
+fn wave_subformat_tag(guid: &GUID) -> Option<u16> {
+    let wave_format_tail = [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+    if guid.data2 == 0 && guid.data3 == 0x0010 && guid.data4 == wave_format_tail {
+        Some(guid.data1 as u16)
+    } else {
+        None
+    }
+}
+
 impl AudioCaptureRuntime {
     fn snapshot(&self) -> Value {
         self.stats
@@ -1357,6 +1612,16 @@ impl AudioCaptureThreadStats {
             silent_packets: 0,
             discontinuity_packets: 0,
             timestamp_error_packets: 0,
+            audio_level_status: "not-started".to_string(),
+            audio_level_format: "unknown".to_string(),
+            audio_level_sample_count: 0,
+            audio_level_frame_count: 0,
+            audio_level_sum_squares: 0.0,
+            audio_level_peak: 0.0,
+            audio_level_last_rms: None,
+            audio_level_last_peak: None,
+            audio_level_last_packet_frames: None,
+            audio_level_unsupported_packets: 0,
             poll_count: 0,
             last_device_position: None,
             last_qpc_position: None,
@@ -1436,6 +1701,11 @@ fn stats_with_runtimes(
 }
 
 fn audio_capture_thread_stats_to_json(stats: &AudioCaptureThreadStats) -> Value {
+    let audio_level_rms = if stats.audio_level_sample_count > 0 {
+        Some((stats.audio_level_sum_squares / stats.audio_level_sample_count as f64).sqrt())
+    } else {
+        None
+    };
     json!({
         "state": stats.state,
         "startedAt": stats.started_at,
@@ -1449,6 +1719,18 @@ fn audio_capture_thread_stats_to_json(stats: &AudioCaptureThreadStats) -> Value 
         "silentPackets": stats.silent_packets,
         "discontinuityPackets": stats.discontinuity_packets,
         "timestampErrorPackets": stats.timestamp_error_packets,
+        "audioLevel": {
+            "status": stats.audio_level_status,
+            "format": stats.audio_level_format,
+            "sampleCount": stats.audio_level_sample_count,
+            "frameCount": stats.audio_level_frame_count,
+            "rms": audio_level_rms,
+            "peak": stats.audio_level_peak,
+            "lastPacketRms": stats.audio_level_last_rms,
+            "lastPacketPeak": stats.audio_level_last_peak,
+            "lastPacketFrames": stats.audio_level_last_packet_frames,
+            "unsupportedPackets": stats.audio_level_unsupported_packets
+        },
         "pollCount": stats.poll_count,
         "lastDevicePosition": stats.last_device_position,
         "lastQpcPosition": stats.last_qpc_position,

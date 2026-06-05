@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 32.5 秒。
+- 结果：通过，耗时约 32.7 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -259,6 +259,10 @@ frameQueue.capacity=3
 frameQueue.pushCount=3
 frameQueue.dropCount=0
 videoFrameQueuePushCount=3
+audioLevel.status=measured
+audioLevel.format=float32
+audioLevel.rms=0.000012
+audioLevel.peak=0.000342
 videoCaptureThread.state=running
 videoCaptureThread.channelId=field-camera
 videoCaptureThread.device=HD Webcam
@@ -294,37 +298,43 @@ holdMs=1000
 iteration 1:
 videoThreadCount=1
 videoSamples=8
-videoMeasuredFps=8.32
+videoMeasuredFps=8.29
 videoFrameQueuePushCount=8
 videoFrameQueueDropCount=5
-audioPackets=94
-audioFrames=45120
+audioPackets=95
+audioFrames=45600
+audioLevel.status=measured
+audioLevel.format=float32
 stoppedState=idle
 
 iteration 2:
 videoThreadCount=1
 videoSamples=8
-videoMeasuredFps=8.31
+videoMeasuredFps=8.34
 videoFrameQueuePushCount=8
 videoFrameQueueDropCount=5
 audioPackets=96
 audioFrames=46080
+audioLevel.status=measured
+audioLevel.format=float32
 stoppedState=idle
 
 iteration 3:
 videoThreadCount=1
 videoSamples=8
-videoMeasuredFps=8.31
+videoMeasuredFps=8.14
 videoFrameQueuePushCount=8
 videoFrameQueueDropCount=5
-audioPackets=96
-audioFrames=46080
+audioPackets=95
+audioFrames=45600
+audioLevel.status=measured
+audioLevel.format=float32
 stoppedState=idle
 ```
 
 结论：
 
-- 当前视频线程数组、元数据帧队列统计和单路音频线程可连续完成 3 次 start/status/stop，未出现线程残留或停止后运行态误报。
+- 当前视频线程数组、元数据帧队列统计、单路音频线程和音频 RMS/peak 统计可连续完成 3 次 start/status/stop，未出现线程残留或停止后运行态误报。
 - 该验证时间仍很短，只能证明启停控制链路可重复；不能替代 30 分钟/2 小时稳定性验收。
 
 WASAPI 阶段复测时的当前设备状态：
@@ -398,6 +408,10 @@ audioCaptureThread.mixFormat=48000Hz / 2ch / IEEE_FLOAT / 32-bit
 audioCaptureThread.packetCount=45
 audioCaptureThread.capturedFrames=21600
 audioCaptureThread.capturedBytes=172800
+audioCaptureThread.audioLevel.status=measured
+audioCaptureThread.audioLevel.format=float32
+audioCaptureThread.audioLevel.rms=0.000012
+audioCaptureThread.audioLevel.peak=0.000342
 audioCaptureThread.pollCount=45
 audioCaptureThread.silentPackets=0
 audioCaptureThread.discontinuityPackets=1
@@ -407,7 +421,8 @@ stop.join=ok
 
 边界：
 
-- 该线程只做 WASAPI capture buffer 读取和统计，尚未做重采样、环形缓冲、AEC、音量表、发布、编码或录像。
+- 该线程只做 WASAPI capture buffer 读取、packet 统计和 RMS/peak 音量统计，尚未做重采样、环形缓冲、AEC、发布、编码或录像。
+- 当前音量数值只代表本机测试环境输入电平，不作为验收阈值；后续需要增加静音、讲话声和外接全向麦的对比样本。
 - `stop` 会设置停止标志并 join 线程；`shutdown` 在 worker 仍运行时也会先清理会话。
 
 ## 6. 4 路 USB 验证
