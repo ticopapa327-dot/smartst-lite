@@ -1,6 +1,22 @@
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use windows::core::{BSTR, PWSTR};
+use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+use windows::Win32::Media::Audio::{
+    eCapture, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+};
+use windows::Win32::Media::MediaFoundation::{
+    IMFActivate, IMFAttributes, MFCreateAttributes, MFEnumDeviceSources, MFShutdown, MFStartup,
+    MFSTARTUP_FULL, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_VERSION,
+};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
+    COINIT_MULTITHREADED, STGM_READ,
+};
 
 const DEFAULT_CHANNELS: [&str; 4] = ["panorama", "field-camera", "endoscope", "aux-device"];
 
@@ -106,7 +122,7 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
 
     match method.as_str() {
         "listDevices" => {
-            let devices = mock_devices();
+            let devices = enumerate_native_devices();
             emit_event("device", "snapshot", devices.clone());
             Ok((devices, false))
         }
@@ -138,7 +154,12 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
                 .map(String::from)
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_else(|| DEFAULT_CHANNELS.iter().map(|channel| channel.to_string()).collect());
+        .unwrap_or_else(|| {
+            DEFAULT_CHANNELS
+                .iter()
+                .map(|channel| channel.to_string())
+                .collect()
+        });
 
     state.state = "running".to_string();
     state.started_at = Some(now_iso_like());
@@ -168,7 +189,7 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
         "syntheticFramesProduced": 0
     });
 
-    emit_event("device", "snapshot", mock_devices());
+    emit_event("device", "snapshot", enumerate_native_devices());
     for channel in &state.channels {
         emit_event("channel", "started", channel.clone());
     }
@@ -205,12 +226,15 @@ fn stop_worker(state: &mut WorkerState) -> Value {
 
 fn mock_devices() -> Value {
     json!({
+        "source": "mock-native",
         "video": [
             {
                 "deviceId": "mock-native-video-panorama",
                 "displayName": "Mock Native USB Capture - Panorama",
                 "transport": "usb",
                 "role": "panorama",
+                "backend": "mock-native",
+                "nativeId": "mock-native-video-panorama",
                 "capabilities": [{ "width": 1920, "height": 1080, "frameRate": 30 }]
             },
             {
@@ -218,6 +242,8 @@ fn mock_devices() -> Value {
                 "displayName": "Mock Native USB Capture - Surgical Field",
                 "transport": "usb",
                 "role": "field",
+                "backend": "mock-native",
+                "nativeId": "mock-native-video-field",
                 "capabilities": [{ "width": 1920, "height": 1080, "frameRate": 30 }]
             },
             {
@@ -225,6 +251,8 @@ fn mock_devices() -> Value {
                 "displayName": "Mock Native USB Capture - Endoscope",
                 "transport": "usb",
                 "role": "endoscope",
+                "backend": "mock-native",
+                "nativeId": "mock-native-video-endoscope",
                 "capabilities": [{ "width": 1920, "height": 1080, "frameRate": 30 }]
             },
             {
@@ -232,6 +260,8 @@ fn mock_devices() -> Value {
                 "displayName": "Mock Native USB Capture - Medical Device",
                 "transport": "usb",
                 "role": "device",
+                "backend": "mock-native",
+                "nativeId": "mock-native-video-device",
                 "capabilities": [{ "width": 1920, "height": 1080, "frameRate": 30 }]
             }
         ],
@@ -241,10 +271,310 @@ fn mock_devices() -> Value {
                 "displayName": "Mock Native USB Omnidirectional Microphone",
                 "transport": "usb",
                 "role": "room-microphone",
+                "backend": "mock-native",
+                "nativeId": "mock-native-audio-room",
                 "capabilities": [{ "sampleRate": 48000, "channels": 2 }]
             }
-        ]
+        ],
+        "diagnostics": {
+            "workerDeviceMode": "mock-native",
+            "mediaFoundation": { "status": "mock", "count": 4 },
+            "wasapi": { "status": "mock", "count": 1 }
+        }
     })
+}
+
+fn enumerate_native_devices() -> Value {
+    let com = match ComApartment::initialize() {
+        Ok(com) => com,
+        Err(error) => {
+            let mut devices = mock_devices();
+            devices["source"] = json!("mock-fallback");
+            devices["diagnostics"] = json!({
+                "workerDeviceMode": "mock-fallback",
+                "reason": "com-initialization-failed",
+                "com": { "status": "failed", "error": error },
+                "mediaFoundation": { "status": "not-run" },
+                "wasapi": { "status": "not-run" }
+            });
+            return devices;
+        }
+    };
+
+    let video_result = enumerate_video_devices();
+    let audio_result = enumerate_audio_capture_devices();
+    drop(com);
+
+    let (video, media_foundation_diag) = match video_result {
+        Ok(video) => {
+            let count = video.len();
+            (
+                video,
+                json!({
+                    "status": "ok",
+                    "count": count,
+                    "backend": "media-foundation",
+                    "capabilitiesStatus": "not-enumerated"
+                }),
+            )
+        }
+        Err(error) => (
+            Vec::new(),
+            json!({
+                "status": "failed",
+                "backend": "media-foundation",
+                "error": error
+            }),
+        ),
+    };
+
+    let (audio, wasapi_diag) = match audio_result {
+        Ok(audio) => {
+            let count = audio.len();
+            (
+                audio,
+                json!({
+                    "status": "ok",
+                    "count": count,
+                    "backend": "wasapi",
+                    "capabilitiesStatus": "not-enumerated"
+                }),
+            )
+        }
+        Err(error) => (
+            Vec::new(),
+            json!({
+                "status": "failed",
+                "backend": "wasapi",
+                "error": error
+            }),
+        ),
+    };
+
+    let media_foundation_failed = media_foundation_diag["status"] == "failed";
+    let wasapi_failed = wasapi_diag["status"] == "failed";
+    if media_foundation_failed && wasapi_failed {
+        let mut devices = mock_devices();
+        devices["source"] = json!("mock-fallback");
+        devices["diagnostics"] = json!({
+            "workerDeviceMode": "mock-fallback",
+            "reason": "native-enumeration-failed",
+            "mediaFoundation": media_foundation_diag,
+            "wasapi": wasapi_diag
+        });
+        return devices;
+    }
+
+    json!({
+        "source": "windows-native",
+        "video": video,
+        "audio": audio,
+        "diagnostics": {
+            "workerDeviceMode": "windows-native",
+            "mediaFoundation": media_foundation_diag,
+            "wasapi": wasapi_diag
+        }
+    })
+}
+
+fn enumerate_video_devices() -> Result<Vec<Value>, String> {
+    let _mf = MediaFoundationSession::start()?;
+    let mut attributes: Option<IMFAttributes> = None;
+    unsafe {
+        MFCreateAttributes(&mut attributes, 1).map_err(format_windows_error)?;
+    }
+    let attributes =
+        attributes.ok_or_else(|| "MFCreateAttributes returned no attributes".to_string())?;
+
+    unsafe {
+        attributes
+            .SetGUID(
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+            )
+            .map_err(format_windows_error)?;
+    }
+
+    let mut activates_ptr: *mut Option<IMFActivate> = ptr::null_mut();
+    let mut count = 0u32;
+    unsafe {
+        MFEnumDeviceSources(&attributes, &mut activates_ptr, &mut count)
+            .map_err(format_windows_error)?;
+    }
+
+    let mut devices = Vec::new();
+    for index in 0..count {
+        let activate = unsafe { ptr::read(activates_ptr.add(index as usize)) };
+        if let Some(activate) = activate {
+            let display_name =
+                get_mf_allocated_string(&activate, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME)
+                    .unwrap_or_else(|| format!("Media Foundation Video {}", index + 1));
+            let native_id = get_mf_allocated_string(
+                &activate,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+            )
+            .unwrap_or_else(|| format!("mf-video-{index}"));
+            let device_id = stable_device_id("mf-video", index, &native_id);
+            let role = DEFAULT_CHANNELS
+                .get(index as usize)
+                .copied()
+                .unwrap_or("aux-device");
+            devices.push(json!({
+                "deviceId": device_id,
+                "displayName": display_name,
+                "transport": infer_transport(&native_id, &display_name),
+                "role": role,
+                "backend": "media-foundation",
+                "nativeId": native_id,
+                "state": "active",
+                "capabilities": [],
+                "capabilitiesStatus": "not-enumerated",
+                "capabilityProbeRequired": true
+            }));
+        }
+    }
+
+    unsafe {
+        CoTaskMemFree(Some(activates_ptr.cast()));
+    }
+    Ok(devices)
+}
+
+fn enumerate_audio_capture_devices() -> Result<Vec<Value>, String> {
+    let enumerator: IMMDeviceEnumerator = unsafe {
+        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(format_windows_error)?
+    };
+    let collection = unsafe {
+        enumerator
+            .EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)
+            .map_err(format_windows_error)?
+    };
+    let count = unsafe { collection.GetCount().map_err(format_windows_error)? };
+    let mut devices = Vec::new();
+
+    for index in 0..count {
+        let device = unsafe { collection.Item(index).map_err(format_windows_error)? };
+        let id_ptr = unsafe { device.GetId().map_err(format_windows_error)? };
+        let native_id =
+            take_cotask_pwstr(id_ptr).unwrap_or_else(|| format!("wasapi-capture-{index}"));
+        let display_name = unsafe {
+            device
+                .OpenPropertyStore(STGM_READ)
+                .ok()
+                .and_then(|store| store.GetValue(&PKEY_Device_FriendlyName).ok())
+                .and_then(|value| BSTR::try_from(&value).ok())
+                .map(|name| name.to_string())
+        }
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| native_id.clone());
+
+        devices.push(json!({
+            "deviceId": stable_device_id("wasapi-audio", index, &native_id),
+            "displayName": display_name,
+            "transport": infer_transport(&native_id, &display_name),
+            "role": "room-microphone",
+            "backend": "wasapi",
+            "nativeId": native_id,
+            "dataFlow": "capture",
+            "state": "active",
+            "capabilities": [],
+            "capabilitiesStatus": "not-enumerated",
+            "capabilityProbeRequired": true
+        }));
+    }
+
+    Ok(devices)
+}
+
+fn get_mf_allocated_string(activate: &IMFActivate, key: &windows::core::GUID) -> Option<String> {
+    let mut value = PWSTR::null();
+    let mut len = 0u32;
+    unsafe {
+        activate
+            .GetAllocatedString(key, &mut value, &mut len)
+            .ok()?;
+    }
+    let result = take_cotask_pwstr(value)?;
+    if result.trim().is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+fn take_cotask_pwstr(value: PWSTR) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let result = unsafe { value.to_string().ok() };
+    unsafe {
+        CoTaskMemFree(Some(value.as_ptr().cast()));
+    }
+    result
+}
+
+fn stable_device_id(prefix: &str, index: u32, native_id: &str) -> String {
+    let hash = fnv1a32(native_id.as_bytes());
+    format!("{prefix}-{index}-{hash:08x}")
+}
+
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c9dc5u32;
+    for byte in bytes {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+fn infer_transport(native_id: &str, display_name: &str) -> &'static str {
+    let haystack = format!("{native_id} {display_name}").to_ascii_lowercase();
+    if haystack.contains("usb") || haystack.contains("vid_") {
+        "usb"
+    } else {
+        "system"
+    }
+}
+
+fn format_windows_error(error: windows::core::Error) -> String {
+    format!("{error}")
+}
+
+struct ComApartment;
+
+impl ComApartment {
+    fn initialize() -> Result<Self, String> {
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if hr.is_err() {
+            return Err(format!("CoInitializeEx failed: {hr:?}"));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+
+struct MediaFoundationSession;
+
+impl MediaFoundationSession {
+    fn start() -> Result<Self, String> {
+        unsafe {
+            MFStartup(MF_VERSION, MFSTARTUP_FULL).map_err(format_windows_error)?;
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for MediaFoundationSession {
+    fn drop(&mut self) {
+        let _ = unsafe { MFShutdown() };
+    }
 }
 
 fn idle_recording() -> Value {

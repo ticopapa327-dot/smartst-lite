@@ -255,6 +255,7 @@
   - `native-worker/Cargo.toml`
   - `native-worker/Cargo.lock`
   - `native-worker/README.md`
+  - `native-worker/list-devices.mjs`
   - `native-worker/smoke.mjs`
   - `native-worker/src/main.rs`
   - `docs/next-stage-real-livekit-native-usb.md`
@@ -269,7 +270,8 @@
   - 执行 `npm run test:all:poc`：通过，已包含真实 JWT smoke、Native readiness smoke 和 USB4 validate smoke。
   - 执行 `npm run media-worker:native:build`：通过，Rust Native Worker 可构建。
   - 执行 `npm run media-worker:native:smoke`：通过，验证 `listDevices`、`start`、`status`、`stop`、`shutdown` 和事件输出。
-  - 执行 `npm run test:all:poc`：通过，已加入 `media-worker:native:smoke`，完整回归耗时约 50.7 秒。
+  - 执行 `npm run media-worker:native:list-devices`：通过，返回 `source=windows-native`，Media Foundation 枚举 4 路视频设备，WASAPI 枚举 4 路采集音频端点。
+  - 执行 `npm run test:all:poc`：通过，已加入 `media-worker:native:smoke`，完整回归耗时约 48.1 秒。
 - 4 路 USB 基础测试：
   - 接入设备：`HD Webcam`、`thinkplus Video Camera FHD`、`罗技高清网络摄像机 C930c`、`Rapoo Camera`。
   - 修正 `media-worker:usb4-validate` 为 4 路并发打开，不再逐路顺序打开。
@@ -278,10 +280,11 @@
 - Native Worker 控制面骨架：
   - 已创建独立 Rust crate `native-worker`。
   - 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`status`、`shutdown`。
-  - 当前仅为 mock native device/channel 状态机，尚未接入 Media Foundation、WASAPI、LiveKit native publisher 或真实录像。
+  - `listDevices` 已接入 Windows 原生枚举：Media Foundation 视频设备和 WASAPI/Core Audio 采集端点。
+  - 当前通道启动仍为 mock native 状态机，尚未接入 Media Foundation sample reader、WASAPI 音频流、LiveKit native publisher 或真实录像。
 - 阻塞：
   - 当前 4 路摄像头基础链路可打开，但不满足 4 路 30fps 实时验收；按当前阶段决策，该性能降级只记录为开发机限制，不阻塞后续 Native Worker 开发。
   - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。
 - 下一步：
   - 用真实 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 启动业务服务，并由桌面 LiveKit PoC 面板连接真实房间。
-  - 进入 Media Foundation/WASAPI 设备枚举实现，并将真实枚举结果接入 `native-worker` 的 `listDevices`。
+  - 进入 Media Foundation 视频能力探测和单路 sample reader 采集验证。

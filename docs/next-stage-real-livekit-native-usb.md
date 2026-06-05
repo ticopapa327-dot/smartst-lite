@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 50.7 秒。
+- 结果：通过，耗时约 48.1 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -91,9 +91,39 @@ npm run media-worker:native-readiness:smoke
 
 当前边界：
 
-- 该 worker 仍是 mock native device/channel 状态机。
-- 尚未接入 Media Foundation 视频枚举、WASAPI 音频枚举、LiveKit native publisher 或真实录像。
+- `listDevices` 已接入 Media Foundation 视频设备枚举和 WASAPI/Core Audio 采集端点枚举。
+- 通道 `start/stop` 仍是 mock native 状态机，尚未接入真实帧采集、WASAPI 音频流、LiveKit native publisher 或真实录像。
 - JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
+
+真实设备枚举结果：
+
+```powershell
+npm run media-worker:native:list-devices
+```
+
+本机结果：
+
+```text
+source=windows-native
+mediaFoundation.status=ok
+mediaFoundation.count=4
+wasapi.status=ok
+wasapi.count=4
+
+video:
+1. HD Webcam
+2. thinkplus Video Camera FHD
+3. 罗技高清网络摄像机 C930c
+4. Rapoo Camera
+
+audio capture:
+1. 麦克风 (Rapoo Camera)
+2. 麦克风阵列 (Senary Audio)
+3. 麦克风 (thinkplus Video Camera FHD)
+4. 麦克风 (罗技高清网络摄像机 C930c)
+```
+
+注意：当前只完成设备枚举，`capabilitiesStatus=not-enumerated`，尚未读取分辨率/帧率/音频格式能力，也未打开真实采集流。
 
 ## 4. 4 路 USB 验证
 
@@ -175,5 +205,5 @@ npm run media-worker:usb4-validate
 1. 准备真实 LiveKit server 和服务端 API key/secret。
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 进入 Media Foundation/WASAPI 设备枚举实现。
-5. 将枚举结果接入现有 `listDevices` 控制面，替换 mock native device。
+4. 进入 Media Foundation 视频能力探测和单路 sample reader 采集验证。
+5. 进入 WASAPI 音频格式探测和采集验证。
