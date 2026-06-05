@@ -281,7 +281,7 @@ struct VideoPayloadQueueDrain {
     remaining_bytes: u64,
 }
 
-struct VideoPgmFormat {
+struct VideoNv12FrameFormat {
     width: u32,
     height: u32,
     subtype_fourcc: String,
@@ -599,6 +599,9 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         "exportVideoPayloadQueuePgm" => {
             Ok((export_video_payload_queue_pgm(state, &params)?, false))
         }
+        "exportVideoPayloadQueuePpm" => {
+            Ok((export_video_payload_queue_ppm(state, &params)?, false))
+        }
         "exportAudioPayloadQueueWav" => {
             Ok((export_audio_payload_queue_wav(state, &params)?, false))
         }
@@ -819,6 +822,47 @@ fn export_video_payload_queue_pgm(
         .export_payload_queue_pgm(PathBuf::from(path), max_frames, overwrite)
         .map_err(|message| WorkerError::new("native-media-error", message))?;
     emit_event("video", "payload-queue-pgm-exported", result.clone());
+    Ok(result)
+}
+
+fn export_video_payload_queue_ppm(
+    state: &mut WorkerState,
+    params: &Value,
+) -> Result<Value, WorkerError> {
+    let max_frames = optional_u32(params, "maxFrames")
+        .map_err(|message| WorkerError::new("invalid-params", message))?
+        .unwrap_or(1)
+        .clamp(1, 10);
+    let overwrite = params
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(WorkerError::new(
+            "invalid-params",
+            "exportVideoPayloadQueuePpm requires a path".to_string(),
+        ));
+    };
+    let requested_channel_id = params.get("channelId").and_then(Value::as_str);
+    let runtime = if let Some(channel_id) = requested_channel_id {
+        state
+            .video_runtimes
+            .iter()
+            .find(|runtime| runtime.channel_id == channel_id)
+    } else {
+        state.video_runtimes.first()
+    };
+    let Some(runtime) = runtime else {
+        return Err(WorkerError::new(
+            "native-media-error",
+            "No running video payload queue is available".to_string(),
+        ));
+    };
+
+    let result = runtime
+        .export_payload_queue_ppm(PathBuf::from(path), max_frames, overwrite)
+        .map_err(|message| WorkerError::new("native-media-error", message))?;
+    emit_event("video", "payload-queue-ppm-exported", result.clone());
     Ok(result)
 }
 
@@ -1695,7 +1739,7 @@ impl VideoCaptureRuntime {
             .map_err(|_| "video capture stats lock poisoned".to_string())?
             .media_type
             .clone();
-        let pgm_format = video_pgm_format_from_media_type(&media_type)?;
+        let pgm_format = video_nv12_format_from_media_type(&media_type)?;
         let drain = self
             .payload_queue
             .lock()
@@ -1768,6 +1812,95 @@ impl VideoCaptureRuntime {
                 "width": pgm_format.width,
                 "height": pgm_format.height,
                 "sourceMediaType": pgm_format.source_format
+            }
+        }))
+    }
+
+    fn export_payload_queue_ppm(
+        &self,
+        path: PathBuf,
+        max_frames: u32,
+        overwrite: bool,
+    ) -> Result<Value, String> {
+        let media_type = self
+            .stats
+            .lock()
+            .map_err(|_| "video capture stats lock poisoned".to_string())?
+            .media_type
+            .clone();
+        let ppm_format = video_nv12_format_from_media_type(&media_type)?;
+        let drain = self
+            .payload_queue
+            .lock()
+            .map_err(|_| "video payload queue lock poisoned".to_string())?
+            .drain(max_frames);
+        let consumed_frames = drain.frames.len() as u32;
+        let latest_frame = drain.frames.last();
+        let latest_sequence = latest_frame.map(|frame| frame.sequence);
+        let latest_timestamp_hns = latest_frame.map(|frame| frame.timestamp_hns);
+        let latest_sample_time_hns = latest_frame.and_then(|frame| frame.sample_time_hns);
+        let latest_total_length_bytes = latest_frame.and_then(|frame| frame.total_length_bytes);
+        if consumed_frames == 0 {
+            return Ok(json!({
+                "status": "empty",
+                "channelId": self.channel_id.clone(),
+                "consumer": "ppm-export",
+                "payloadTransport": "native-only",
+                "exportedOverJson": false,
+                "maxFrames": max_frames,
+                "consumedFrames": 0,
+                "consumedBytes": 0,
+                "remainingDepth": drain.remaining_depth,
+                "remainingBytes": drain.remaining_bytes,
+                "path": path.to_string_lossy().to_string()
+            }));
+        }
+
+        let Some(frame) = latest_frame else {
+            return Err("video payload queue export has no latest frame".to_string());
+        };
+        let ppm_bytes = build_ppm_bytes(&ppm_format, &frame.payload)?;
+        write_binary_file(&path, &ppm_bytes, overwrite, "video PPM")?;
+        let file_bytes = u64::try_from(ppm_bytes.len()).unwrap_or(u64::MAX);
+
+        self.update(|stats| {
+            stats.frame_payload_queue_depth = drain.remaining_depth;
+            stats.frame_queue_depth = drain.remaining_depth;
+            stats.frame_payload_queue_bytes = drain.remaining_bytes;
+            stats.frame_payload_consume_count = stats
+                .frame_payload_consume_count
+                .saturating_add(u64::from(consumed_frames));
+            stats.frame_payload_consumed_bytes = stats
+                .frame_payload_consumed_bytes
+                .saturating_add(drain.consumed_bytes);
+            stats.frame_payload_latest_consumed_sequence = latest_sequence;
+            stats.frame_payload_consumer_status = "ppm-export".to_string();
+        });
+
+        Ok(json!({
+            "status": "exported",
+            "channelId": self.channel_id.clone(),
+            "consumer": "ppm-export",
+            "payloadTransport": "native-only",
+            "exportedOverJson": false,
+            "fileFormat": "ppm",
+            "path": path.to_string_lossy().to_string(),
+            "maxFrames": max_frames,
+            "consumedFrames": consumed_frames,
+            "consumedBytes": drain.consumed_bytes,
+            "fileBytes": file_bytes,
+            "latestSequence": latest_sequence,
+            "latestTimestampHns": latest_timestamp_hns,
+            "latestSampleTimeHns": latest_sample_time_hns,
+            "latestTotalLengthBytes": latest_total_length_bytes,
+            "remainingDepth": drain.remaining_depth,
+            "remainingBytes": drain.remaining_bytes,
+            "imageFormat": {
+                "format": "PPM",
+                "sourceSubtype": ppm_format.subtype_fourcc,
+                "width": ppm_format.width,
+                "height": ppm_format.height,
+                "sourceMediaType": ppm_format.source_format
             }
         }))
     }
@@ -2223,7 +2356,7 @@ fn build_wav_bytes(format: &AudioWavFormat, audio_data: &[u8]) -> Result<Vec<u8>
     Ok(bytes)
 }
 
-fn video_pgm_format_from_media_type(media_type: &Value) -> Result<VideoPgmFormat, String> {
+fn video_nv12_format_from_media_type(media_type: &Value) -> Result<VideoNv12FrameFormat, String> {
     if media_type.is_null() {
         return Err("video media type is not available yet".to_string());
     }
@@ -2235,7 +2368,7 @@ fn video_pgm_format_from_media_type(media_type: &Value) -> Result<VideoPgmFormat
         .to_string();
     if subtype_fourcc != "NV12" {
         return Err(format!(
-            "unsupported video PGM export subtype: {subtype_fourcc}; only NV12 is supported"
+            "unsupported video frame export subtype: {subtype_fourcc}; only NV12 is supported"
         ));
     }
     let width = media_type
@@ -2251,7 +2384,7 @@ fn video_pgm_format_from_media_type(media_type: &Value) -> Result<VideoPgmFormat
         .filter(|value| *value > 0)
         .ok_or_else(|| "video media type height is missing or invalid".to_string())?;
 
-    Ok(VideoPgmFormat {
+    Ok(VideoNv12FrameFormat {
         width,
         height,
         subtype_fourcc,
@@ -2259,7 +2392,7 @@ fn video_pgm_format_from_media_type(media_type: &Value) -> Result<VideoPgmFormat
     })
 }
 
-fn build_pgm_bytes(format: &VideoPgmFormat, payload: &[u8]) -> Result<Vec<u8>, String> {
+fn build_pgm_bytes(format: &VideoNv12FrameFormat, payload: &[u8]) -> Result<Vec<u8>, String> {
     let luma_bytes = u64::from(format.width)
         .checked_mul(u64::from(format.height))
         .ok_or_else(|| "video PGM luma size overflow".to_string())?;
@@ -2276,6 +2409,64 @@ fn build_pgm_bytes(format: &VideoPgmFormat, payload: &[u8]) -> Result<Vec<u8>, S
     bytes.extend_from_slice(header.as_bytes());
     bytes.extend_from_slice(&payload[..luma_bytes]);
     Ok(bytes)
+}
+
+fn build_ppm_bytes(format: &VideoNv12FrameFormat, payload: &[u8]) -> Result<Vec<u8>, String> {
+    let width =
+        usize::try_from(format.width).map_err(|_| "video PPM width is too large".to_string())?;
+    let height =
+        usize::try_from(format.height).map_err(|_| "video PPM height is too large".to_string())?;
+    let luma_bytes = width
+        .checked_mul(height)
+        .ok_or_else(|| "video PPM luma size overflow".to_string())?;
+    let chroma_bytes = luma_bytes / 2;
+    let required_bytes = luma_bytes
+        .checked_add(chroma_bytes)
+        .ok_or_else(|| "video PPM NV12 size overflow".to_string())?;
+    if payload.len() < required_bytes {
+        return Err(format!(
+            "video payload is too small for NV12 RGB conversion: payload={}, required={required_bytes}",
+            payload.len()
+        ));
+    }
+
+    let header = format!("P6\n{} {}\n255\n", format.width, format.height);
+    let rgb_bytes = luma_bytes
+        .checked_mul(3)
+        .ok_or_else(|| "video PPM RGB size overflow".to_string())?;
+    let mut bytes = Vec::with_capacity(header.len().saturating_add(rgb_bytes));
+    bytes.extend_from_slice(header.as_bytes());
+
+    for y in 0..height {
+        let y_row = y * width;
+        let uv_row = luma_bytes + (y / 2) * width;
+        for x in 0..width {
+            let y_value = payload[y_row + x] as i32;
+            let uv_index = uv_row + (x / 2) * 2;
+            let u_value = payload[uv_index] as i32;
+            let v_value = payload[uv_index + 1] as i32;
+            let (r, g, b) = nv12_to_rgb(y_value, u_value, v_value);
+            bytes.push(r);
+            bytes.push(g);
+            bytes.push(b);
+        }
+    }
+
+    Ok(bytes)
+}
+
+fn nv12_to_rgb(y: i32, u: i32, v: i32) -> (u8, u8, u8) {
+    let c = (y - 16).max(0);
+    let d = u - 128;
+    let e = v - 128;
+    let r = (298 * c + 409 * e + 128) >> 8;
+    let g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    let b = (298 * c + 516 * d + 128) >> 8;
+    (clamp_u8(r), clamp_u8(g), clamp_u8(b))
+}
+
+fn clamp_u8(value: i32) -> u8 {
+    value.clamp(0, 255) as u8
 }
 
 fn write_binary_file(

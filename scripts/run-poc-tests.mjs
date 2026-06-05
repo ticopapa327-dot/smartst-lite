@@ -12,6 +12,7 @@ const checks = [
   ["run", "media-worker:native:smoke"],
   ["run", "media-worker:native:payload-consume"],
   ["run", "media-worker:native:video-pgm-export"],
+  ["run", "media-worker:native:video-ppm-export"],
   ["run", "media-worker:native:audio-payload-consume"],
   ["run", "media-worker:native:audio-wav-export"],
   ["run", "media-worker:native:audio-profile"],
