@@ -298,6 +298,9 @@
   - audio payload queue consume 阶段新增 `consumeAudioPayloadQueue` 和 `npm run media-worker:native:audio-payload-consume`：通过，1000ms 内当前 1 路 `麦克风阵列 (Senary Audio)` 复制 94 个 PCM packet，手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`audioPayloadConsumeCount=5`、`audioPayloadConsumedBytes=19200`、`consumerStatus=manual-drain`、`exportedOverJson=false`。
   - 桌面控制面新增 Tauri `consume_native_worker_audio_payload_queue` 命令、前端服务封装和工作台 `Drain audio` 按钮；按钮只触发 native PCM queue drain 并刷新 JSON 状态，不显示或传输 PCM 字节。
   - audio payload queue consume 阶段复测 `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml`、`npm run build`、`npm run media-worker:native:smoke`、`npm run media-worker:native:audio-payload-consume`、`npm run test:all:poc`：均通过，Tauri helper 单元测试 5/5 通过，完整回归耗时约 36.9 秒；仍有 Vite chunk 体积超过 500 kB 警告。
+  - WASAPI audio profile 阶段新增 `npm run media-worker:native:audio-profile`：默认只启动音频线程并按 500ms 间隔读取 status，不传输 PCM payload；支持 `SMARTST_NATIVE_AUDIO_PROFILE_LABEL`、`SMARTST_NATIVE_AUDIO_PROFILE_DURATION_MS`、`SMARTST_NATIVE_AUDIO_PROFILE_SAMPLE_INTERVAL_MS`、`SMARTST_NATIVE_AUDIO_PROFILE_OUTPUT`，用于静音/讲话/外接全向麦对比样本。
+  - 执行 `npm run media-worker:native:audio-profile`：通过，2 秒内采样 4 次，`packetCountStart=44`、`packetCountEnd=197`、`packetsProduced=153`、`capturedFramesEnd=94560`、`capturedBytesEnd=756480`、`audioLevelStatus=measured`、`audioLevelFormat=float32`、`rms.average=0.0002509`、`peak.max=0.0020614`、`payloadCopyDelta=153`、`payloadCopyErrorCountEnd=0`、`stoppedState=idle`。
+  - audio profile 阶段复测 `npm run test:all:poc`：通过，完整回归耗时约 39.1 秒；仍有 Vite chunk 体积超过 500 kB 警告。
   - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness`、`probe_native_worker_devices`、`start_native_worker_session`、`get_native_worker_session_status`、`stop_native_worker_session` 命令可编译。
   - 执行 `cargo test --manifest-path src-tauri/Cargo.toml`：通过，3 个 Tauri Native Worker helper 单元测试全部通过，覆盖默认 start 参数、workspace manifest 定位和 debug binary 路径命名。
   - 执行 `npm run build`：通过，Workbench 已接入 Native Worker readiness 状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；普通浏览器环境返回 `desktop-only`，不启动采集。
@@ -317,6 +320,7 @@
   - 已增加 `probeVideoCapabilities` 和 `captureVideoSample`，可验证单路 Media Foundation 原生媒体类型和首帧样本读取。
   - 已增加 `measureVideoFrames`，可验证单路 Media Foundation 连续帧读取和帧率统计；真实帧 payload 仍留在 native 侧，不通过 JSON Lines 传输。
   - 已增加 `probeAudioFormat` 和 `captureAudioBuffer`，可验证 WASAPI mix format 和短时 capture buffer 读取。
+  - 已增加 `media-worker:native:audio-profile`，可对当前 WASAPI capture endpoint 做短时 RMS/peak/profile 基线采样。
   - 当前已接入多路视频线程结构、native-only 有界帧 payload 队列、视频手动 drain 消费验证、Tauri/工作台 Drain video 控制、WASAPI RMS/peak 音量统计、native-only 有界 PCM packet payload 队列、音频手动 drain 消费验证和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入预览纹理、音频重采样/AEC、LiveKit native publisher 或真实录像。
   - 桌面端已新增 Native Worker readiness 诊断入口、工作台状态条、手动 `Device Probe` 面板、手动 start/status/stop 控件、`Drain video` 控件和 `Drain audio` 控件；`probe_native_worker_devices` 只通过 Native Worker 执行 `listDevices` 枚举，不执行 `start`，不启动连续采集线程；start/status/stop/drain 控件只展示 JSON 状态统计，不传输媒体 payload。
   - start/status/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、视频 native payload queue bytes/copy/consume 和音频 native PCM queue bytes/copy/consume 展示；该展示仍是控制面状态展示，不承载媒体 payload。
@@ -326,5 +330,5 @@
   - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。
 - 下一步：
   - 用真实 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 启动业务服务，并由桌面 LiveKit PoC 面板连接真实房间。
-  - 将 WASAPI 连续音频线程推进到静音/讲话/外接全向麦对比样本、重采样和 AEC 边界验证。
+  - 使用 `media-worker:native:audio-profile` 分别采集静音、讲话、外接全向麦样本，再推进重采样和 AEC 边界验证。
   - 将 Native Worker start/status/stop 控制面板推进到更完整的通道状态展示、错误恢复和 4 路硬件递增验证。
