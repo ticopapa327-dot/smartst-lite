@@ -98,6 +98,20 @@ $env:SMARTST_NATIVE_SESSION_HOLD_MS="500"
 npm run media-worker:native:session
 ```
 
+## Stress Native Capture Session
+
+```powershell
+npm run media-worker:native:session-stress
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_SESSION_STRESS_ITERATIONS="3"
+$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
+npm run media-worker:native:session-stress
+```
+
 ## Smoke Test
 
 ```powershell

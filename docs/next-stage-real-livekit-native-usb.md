@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 32.4 秒。
+- 结果：通过，耗时约 32.5 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -269,6 +269,46 @@ stop.join=ok
 
 - 当前只启动第一路已绑定视频通道的统计线程，尚未做多路视频线程管理。
 - 线程只统计样本和时间线，不传输帧 payload，不做帧队列、预览纹理、编码或录像。
+
+重复启停稳定性验证：
+
+```powershell
+npm run media-worker:native:session-stress
+```
+
+本机结果：
+
+```text
+测试时间：2026-06-06
+iterations=3
+holdMs=1000
+
+iteration 1:
+videoSamples=8
+videoMeasuredFps=8.21
+audioPackets=93
+audioFrames=44640
+stoppedState=idle
+
+iteration 2:
+videoSamples=8
+videoMeasuredFps=8.32
+audioPackets=96
+audioFrames=46080
+stoppedState=idle
+
+iteration 3:
+videoSamples=8
+videoMeasuredFps=8.32
+audioPackets=96
+audioFrames=46080
+stoppedState=idle
+```
+
+结论：
+
+- 当前单路视频线程和单路音频线程可连续完成 3 次 start/status/stop，未出现线程残留或停止后运行态误报。
+- 该验证时间仍很短，只能证明启停控制链路可重复；不能替代 30 分钟/2 小时稳定性验收。
 
 WASAPI 阶段复测时的当前设备状态：
 

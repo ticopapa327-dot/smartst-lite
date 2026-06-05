@@ -262,6 +262,7 @@
   - `native-worker/video-loop.mjs`
   - `native-worker/audio-probe.mjs`
   - `native-worker/session.mjs`
+  - `native-worker/session-stress.mjs`
   - `docs/next-stage-real-livekit-native-usb.md`
   - `docs/README.md`
 - 验证：
@@ -280,7 +281,8 @@
   - WASAPI 阶段复测 `npm run media-worker:native:list-devices`：通过，当前 Windows 活跃设备为 1 路视频 `HD Webcam` 和 1 路音频 `麦克风阵列 (Senary Audio)`；该结果只反映当前接入状态，不覆盖前一次 4 路摄像头测试结果。
   - 执行 `npm run media-worker:native:audio-probe`：通过，第 0 路 `麦克风阵列 (Senary Audio)` mix format 为 48000Hz、2ch、EXTENSIBLE/IEEE_FLOAT、32-bit、blockAlign=8；500ms WASAPI capture 返回 `status=buffer-captured`、`packetCount=49`、`capturedFrames=23520`、`capturedBytes=188160`、`silentPackets=0`、`discontinuityPackets=1`。
   - 执行 `npm run media-worker:native:session`：通过，`start/status/stop` 返回真实采集会话骨架并默认启动 Media Foundation 视频统计线程和 WASAPI 音频统计线程；当前绑定 1 路视频 `HD Webcam`、1 路音频 `麦克风阵列 (Senary Audio)`，第 2 个请求通道为 `waiting-for-device`；500ms status 返回 `videoCaptureThread.state=running`、`sampleCount=3`、`readCount=4`、`measuredFps=6.41`、`streamFlagNames=stream-tick`，以及 `audioCaptureThread.state=running`、`packetCount=45`、`capturedFrames=21600`、`capturedBytes=172800`、`discontinuityPackets=1`；`stop` 后 `captureSession.state=idle` 且 `stats.realMediaSession=false`。
-  - 执行 `npm run test:all:poc`：通过，完整回归耗时约 32.4 秒；仍有 Vite chunk 体积超过 500 kB 警告。
+  - 执行 `npm run media-worker:native:session-stress`：通过，连续 3 轮 start/status/stop，每轮 hold 1000ms；视频样本数均为 8，音频 packet 数为 93/96/96，三轮 `stoppedState=idle`。
+  - 执行 `npm run test:all:poc`：通过，完整回归耗时约 32.5 秒；仍有 Vite chunk 体积超过 500 kB 警告。
 - 4 路 USB 基础测试：
   - 接入设备：`HD Webcam`、`thinkplus Video Camera FHD`、`罗技高清网络摄像机 C930c`、`Rapoo Camera`。
   - 修正 `media-worker:usb4-validate` 为 4 路并发打开，不再逐路顺序打开。
@@ -291,6 +293,7 @@
   - 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`status`、`shutdown`。
   - `listDevices` 已接入 Windows 原生枚举：Media Foundation 视频设备和 WASAPI/Core Audio 采集端点。
   - `start/status/stop` 已进入真实采集会话骨架：绑定当前视频/音频设备和默认媒体格式，缺失通道标记为 `waiting-for-device`，并在绑定设备时默认启动可停止的 Media Foundation 视频统计线程和 WASAPI 音频统计线程。
+  - 已增加 `media-worker:native:session-stress`，用于重复验证 start/status/stop 和线程 stop/join 清理。
   - 已增加 `probeVideoCapabilities` 和 `captureVideoSample`，可验证单路 Media Foundation 原生媒体类型和首帧样本读取。
   - 已增加 `measureVideoFrames`，可验证单路 Media Foundation 连续帧读取和帧率统计；真实帧 payload 仍留在 native 侧，不通过 JSON Lines 传输。
   - 已增加 `probeAudioFormat` 和 `captureAudioBuffer`，可验证 WASAPI mix format 和短时 capture buffer 读取。
