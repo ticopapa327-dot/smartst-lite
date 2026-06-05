@@ -177,6 +177,21 @@ $env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
 npm run media-worker:native:payload-consume
 ```
 
+## Simulate Native Video Preview Drain
+
+```powershell
+npm run media-worker:native:video-preview-drain
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_PREVIEW_DRAIN_DURATION_MS="2000"
+$env:SMARTST_NATIVE_PREVIEW_DRAIN_INTERVAL_MS="250"
+$env:SMARTST_NATIVE_PREVIEW_DRAIN_MAX_FRAMES="1"
+npm run media-worker:native:video-preview-drain
+```
+
 ## Export Native Video Payload Queue To PGM
 
 ```powershell
@@ -308,6 +323,8 @@ When `videoFormatPreference` is present, `start` scans native Media Foundation m
 When `videoChannelBindings` is present, `start` can bind a requested channel to a specific Media Foundation video device by `index`, `deviceId`, `nativeId`, or `displayNameContains`. The channel response includes `deviceBinding`. Without `videoChannelBindings`, behavior remains enumeration-order based: requested channel N binds to video device N when available.
 
 `session-plan` is a Node-side smoke that combines explicit channel binding and video format preference, starts a short native session, verifies copied frames, and writes `smartst.native-session-plan.v0.1` JSON to `.tmp`. It is a hardware/session configuration aid only; it is not the formal recording manifest, database schema, or LiveKit room contract.
+
+`video-preview-drain` simulates a future preview or publisher consumer by periodically draining one video frame from the native queue and validating increasing sequence metadata, consumed byte counters, and `exportedOverJson=false`. It still does not render pixels, upload GPU textures, publish LiveKit tracks, encode, or record.
 
 Each video thread reports `frameQueue` statistics with `mode=native-payload-bounded` and `payloadTransport=native-only`. The worker copies each Media Foundation sample into a bounded native memory queue and reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export frame payloads through JSON Lines. `consumeVideoPayloadQueue` drains queued native payload frames and returns only metadata and byte counters, so it can validate the future preview/publisher/recorder consumer boundary without returning frame bytes. Until a real consumer is attached, new payload frames overwrite the bounded queue after capacity is reached and increment `dropCount`.
 

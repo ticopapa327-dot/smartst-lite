@@ -40,6 +40,7 @@
     "media-worker:native:session-plan": "node native-worker/session-plan.mjs",
     "media-worker:native:session-stress": "node native-worker/session-stress.mjs",
     "media-worker:native:payload-consume": "node native-worker/payload-consume.mjs",
+    "media-worker:native:video-preview-drain": "node native-worker/video-preview-drain.mjs",
     "media-worker:native:video-pgm-export": "node native-worker/video-pgm-export.mjs",
     "media-worker:native:video-ppm-export": "node native-worker/video-ppm-export.mjs",
     "media-worker:native:audio-payload-consume": "node native-worker/audio-payload-consume.mjs",

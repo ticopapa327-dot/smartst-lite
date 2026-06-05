@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 51.4 秒。
+- 结果：通过，耗时约 54.4 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -91,13 +91,14 @@ npm run media-worker:native-readiness:smoke
 - 已新增 `videoFormatPreference` 软匹配选择策略，支持按 subtype、width、height、frameRate 和 minimum constraint 选择最接近的 Media Foundation native media type。
 - 已新增 `videoChannelBindings` 显式通道绑定策略，支持按 channelId 指定 Media Foundation video `index/deviceId/nativeId/displayNameContains`，避免正式 4 路采集卡只能依赖枚举顺序。
 - 已新增 `npm run media-worker:native:session-plan`，组合通道绑定和格式偏好，生成 `smartst.native-session-plan.v0.1` 会话配置 smoke 摘要。
+- 已新增 `npm run media-worker:native:video-preview-drain`，周期性 drain native 视频队列，模拟预览或 publisher 消费者并验证 sequence 单调递增、消费字节计数和 `exportedOverJson=false`。
 - 已新增 Node-side Native export artifact manifest smoke，读取 PGM/PPM/WAV 导出文件，默认校验产物 mtime 在 300000ms 内，并写入 `smartst.native-export-artifacts.v0.1` JSON 清单。
 
 当前边界：
 
 - `listDevices` 已接入 Media Foundation 视频设备枚举和 WASAPI/Core Audio 采集端点枚举。
 - 通道 `start/stop/status` 已进入真实采集会话骨架：可绑定当前 Media Foundation 视频设备、WASAPI 音频端点和默认媒体格式，并输出 `captureSession`。
-- 当前 `start` 已默认启动可停止的 Media Foundation 视频线程和 WASAPI 音频统计线程；视频线程已将 SourceReader sample payload 复制到 native-only 有界队列；WASAPI 音频线程已将 capture packet PCM 复制到 native-only 有界队列；`videoChannelBindings` 可按 channelId 显式绑定 Media Foundation video 设备，未传绑定时仍按枚举顺序绑定；`videoFormatPreference` 可按 subtype、width、height、frameRate 和 minimum constraint 软匹配选择最接近的 native media type，未传偏好时仍使用 `videoMediaTypeIndex`；`media-worker:native:session-plan` 可将通道绑定、格式选择、设备和 copiedFrames 写入本地 smoke 摘要；`consumeVideoPayloadQueue` 可在 native 侧 drain 视频 payload 队列并只返回统计；`exportVideoPayloadQueuePgm` 可在 native 侧将 NV12 Y 平面导出为 PGM 灰度图并只返回文件统计；`exportVideoPayloadQueuePpm` 可在 native 侧将 NV12 CPU 转换为 RGB PPM 并只返回文件统计；`consumeAudioPayloadQueue` 可在 native 侧 drain 音频 PCM packet 队列并只返回统计；`exportAudioPayloadQueueWav` 可在 native 侧将 PCM/IEEE_FLOAT payload 导出为 WAV 文件并只返回文件统计；`media-worker:native:export-artifact-manifest` 可读取 PGM/PPM/WAV 导出文件、校验新鲜度并生成带 SHA-256 的 Native export artifact manifest；尚未接入预览纹理、音频重采样、AEC、LiveKit native publisher 或真实录像。
+- 当前 `start` 已默认启动可停止的 Media Foundation 视频线程和 WASAPI 音频统计线程；视频线程已将 SourceReader sample payload 复制到 native-only 有界队列；WASAPI 音频线程已将 capture packet PCM 复制到 native-only 有界队列；`videoChannelBindings` 可按 channelId 显式绑定 Media Foundation video 设备，未传绑定时仍按枚举顺序绑定；`videoFormatPreference` 可按 subtype、width、height、frameRate 和 minimum constraint 软匹配选择最接近的 native media type，未传偏好时仍使用 `videoMediaTypeIndex`；`media-worker:native:session-plan` 可将通道绑定、格式选择、设备和 copiedFrames 写入本地 smoke 摘要；`consumeVideoPayloadQueue` 可在 native 侧 drain 视频 payload 队列并只返回统计；`media-worker:native:video-preview-drain` 可周期性消费 native 视频 payload 队列并验证 preview/publisher 消费者控制链路；`exportVideoPayloadQueuePgm` 可在 native 侧将 NV12 Y 平面导出为 PGM 灰度图并只返回文件统计；`exportVideoPayloadQueuePpm` 可在 native 侧将 NV12 CPU 转换为 RGB PPM 并只返回文件统计；`consumeAudioPayloadQueue` 可在 native 侧 drain 音频 PCM packet 队列并只返回统计；`exportAudioPayloadQueueWav` 可在 native 侧将 PCM/IEEE_FLOAT payload 导出为 WAV 文件并只返回文件统计；`media-worker:native:export-artifact-manifest` 可读取 PGM/PPM/WAV 导出文件、校验新鲜度并生成带 SHA-256 的 Native export artifact manifest；尚未接入预览纹理、音频重采样、AEC、LiveKit native publisher 或真实录像。
 - JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
 
 真实采集会话骨架验证：
@@ -472,6 +473,7 @@ npm run media-worker:native:video-ppm-export
 npm run media-worker:native:format-preference
 npm run media-worker:native:channel-binding
 npm run media-worker:native:session-plan
+npm run media-worker:native:video-preview-drain
 npm run media-worker:native:audio-wav-export
 npm run media-worker:native:export-artifact-manifest
 npm run media-worker:native:audio-profile
@@ -528,21 +530,30 @@ session-plan.channelCount=1
 session-plan.selectedDeviceId=mf-video-0-4cc44571
 session-plan.selectedMediaTypeIndex=0
 session-plan.copiedFrames=3
+video-preview-drain.eventCount=8
+video-preview-drain.consumedEventCount=8
+video-preview-drain.totalConsumedFrames=8
+video-preview-drain.totalConsumedBytes=11059200
+video-preview-drain.firstSequence=1
+video-preview-drain.lastSequence=17
+video-preview-drain.finalConsumerStatus=manual-drain
+video-preview-drain.finalQueueDepth=2
+video-preview-drain.exportedOverJson=false
 video-pgm-export.exportedFrames=1
 video-pgm-export.fileBytes=921616
 video-pgm-export.width=1280
 video-pgm-export.height=720
 video-pgm-export.luma.min=2
-video-pgm-export.luma.max=33
+video-pgm-export.luma.max=28
 video-pgm-export.consumerStatus=pgm-export
 video-pgm-export.exportedOverJson=false
 video-ppm-export.exportedFrames=1
 video-ppm-export.fileBytes=2764816
 video-ppm-export.width=1280
 video-ppm-export.height=720
-video-ppm-export.rgb.r.max=18
+video-ppm-export.rgb.r.max=26
 video-ppm-export.rgb.g.max=14
-video-ppm-export.rgb.b.max=24
+video-ppm-export.rgb.b.max=20
 video-ppm-export.consumerStatus=ppm-export
 video-ppm-export.exportedOverJson=false
 export-artifact-manifest.artifactCount=3
@@ -638,6 +649,7 @@ npm run media-worker:native:format-preference
 npm run media-worker:native:channel-binding
 npm run media-worker:native:session-plan
 npm run media-worker:native:payload-consume
+npm run media-worker:native:video-preview-drain
 npm run media-worker:native:video-pgm-export
 npm run media-worker:native:video-ppm-export
 npm run media-worker:native:audio-payload-consume
@@ -649,7 +661,7 @@ npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 5 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:format-preference` 验证 `videoFormatPreference` 选择 NV12 1280x720@30、inspected 17 个 media type、`selectedIndex=0`、`score=0`、线程复制 3 帧；`npm run media-worker:native:channel-binding` 验证 `field-camera` 可通过 `videoChannelBindings` 显式绑定到 `index=0` / `deviceId=mf-video-0-4cc44571`，`deviceBinding.mode=explicit` 且线程复制 3 帧；`npm run media-worker:native:session-plan` 验证通道绑定和格式偏好可组合为 `smartst.native-session-plan.v0.1` 摘要，`channelCount=1`、`selectedMediaTypeIndex=0`、线程复制 3 帧；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；`npm run media-worker:native:video-pgm-export` 验证 1000ms 内 1 帧 NV12 native-side 导出 PGM，`width=1280`、`height=720`、`fileBytes=921616`、`luma.min=2`、`luma.max=33`、`exportedOverJson=false`；`npm run media-worker:native:video-ppm-export` 验证 1000ms 内 1 帧 NV12 CPU 转 RGB PPM，`fileBytes=2764816`、`rgb.r.max=18`、`rgb.g.max=14`、`rgb.b.max=24`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run media-worker:native:audio-payload-consume` 验证 1000ms 内 96 个 PCM packet copy 后手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`exportedOverJson=false`；`npm run media-worker:native:audio-wav-export` 验证 1000ms 内 10 个 PCM packet native-side 导出 WAV，`exportedBytes=38400`、`fileBytes=38444`、header 为 IEEE_FLOAT/2ch/48000Hz/32-bit、`exportedOverJson=false`；`npm run media-worker:native:export-artifact-manifest` 验证已导出的 PGM/PPM/WAV 可被统一读取、校验 header/dimensions 和 300000ms 新鲜度、写入 3 个 artifact 的 bytes 和 SHA-256；`npm run media-worker:native:audio-profile` 验证 2 秒内 4 次 status 采样，packet 增长 152、RMS/peak 可读、payload copy error 为 0；`npm run media-worker:native:session-backpressure` 验证 3 秒无消费者场景下视频队列 `maxDepth=3`、音频队列 `maxDepth=50` 且 drop 计数增长；周期性 1000ms drain 场景验证 3 秒内 6 次 consume event，视频 consume 6 帧、音频 consume 15 个 packet 且队列仍有界；`npm run test:all:poc` 完整回归耗时约 51.4 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 5 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:format-preference` 验证 `videoFormatPreference` 选择 NV12 1280x720@30、inspected 17 个 media type、`selectedIndex=0`、`score=0`、线程复制 3 帧；`npm run media-worker:native:channel-binding` 验证 `field-camera` 可通过 `videoChannelBindings` 显式绑定到 `index=0` / `deviceId=mf-video-0-4cc44571`，`deviceBinding.mode=explicit` 且线程复制 3 帧；`npm run media-worker:native:session-plan` 验证通道绑定和格式偏好可组合为 `smartst.native-session-plan.v0.1` 摘要，`channelCount=1`、`selectedMediaTypeIndex=0`、线程复制 3 帧；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；`npm run media-worker:native:video-preview-drain` 验证 2 秒内周期性 drain 8 帧，sequence 从 1 增至 17，`totalConsumedBytes=11059200`、`finalConsumerStatus=manual-drain`、`exportedOverJson=false`；`npm run media-worker:native:video-pgm-export` 验证 1000ms 内 1 帧 NV12 native-side 导出 PGM，`width=1280`、`height=720`、`fileBytes=921616`、`luma.min=2`、`luma.max=28`、`exportedOverJson=false`；`npm run media-worker:native:video-ppm-export` 验证 1000ms 内 1 帧 NV12 CPU 转 RGB PPM，`fileBytes=2764816`、`rgb.r.max=26`、`rgb.g.max=14`、`rgb.b.max=20`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run media-worker:native:audio-payload-consume` 验证 1000ms 内 95 个 PCM packet copy 后手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`exportedOverJson=false`；`npm run media-worker:native:audio-wav-export` 验证 1000ms 内 10 个 PCM packet native-side 导出 WAV，`exportedBytes=38400`、`fileBytes=38444`、header 为 IEEE_FLOAT/2ch/48000Hz/32-bit、`exportedOverJson=false`；`npm run media-worker:native:export-artifact-manifest` 验证已导出的 PGM/PPM/WAV 可被统一读取、校验 header/dimensions 和 300000ms 新鲜度、写入 3 个 artifact 的 bytes 和 SHA-256；`npm run media-worker:native:audio-profile` 验证 2 秒内 4 次 status 采样，packet 增长 155、RMS/peak 可读、payload copy error 为 0；`npm run media-worker:native:session-backpressure` 验证 3 秒无消费者场景下视频队列 `maxDepth=3`、音频队列 `maxDepth=50` 且 drop 计数增长；周期性 1000ms drain 场景验证 3 秒内 6 次 consume event，视频 consume 6 帧、音频 consume 15 个 packet 且队列仍有界；`npm run test:all:poc` 完整回归耗时约 54.4 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 

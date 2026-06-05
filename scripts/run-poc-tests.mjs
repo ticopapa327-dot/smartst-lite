@@ -14,6 +14,7 @@ const checks = [
   ["run", "media-worker:native:channel-binding"],
   ["run", "media-worker:native:session-plan"],
   ["run", "media-worker:native:payload-consume"],
+  ["run", "media-worker:native:video-preview-drain"],
   ["run", "media-worker:native:video-pgm-export"],
   ["run", "media-worker:native:video-ppm-export"],
   ["run", "media-worker:native:audio-payload-consume"],
