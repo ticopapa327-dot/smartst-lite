@@ -1,6 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { AccessToken } from "livekit-server-sdk";
 
 const DEFAULT_LIMITS = Object.freeze({
   maxInteractiveParticipants: 4,
@@ -17,6 +18,21 @@ const VALID_CLIENT_TYPES = new Set([
 
 const VALID_ROOM_MODES = new Set(["watch", "interactive", "conference"]);
 
+function createTokenConfig(options) {
+  const mode = options.tokenMode || process.env.LIVEKIT_TOKEN_MODE || "mock";
+  if (!["mock", "real"].includes(mode)) {
+    throw new Error(`Invalid token mode: ${mode}`);
+  }
+
+  return {
+    mode,
+    livekitUrl: options.livekitUrl || process.env.LIVEKIT_URL || "ws://127.0.0.1:7880",
+    apiKey: options.livekitApiKey || process.env.LIVEKIT_API_KEY,
+    apiSecret: options.livekitApiSecret || process.env.LIVEKIT_API_SECRET,
+    ttlSeconds: Number.parseInt(options.livekitTokenTtlSeconds || process.env.LIVEKIT_TOKEN_TTL_SECONDS || "3600", 10),
+  };
+}
+
 export function createBusinessServiceServer(options = {}) {
   const state = {
     endpoints: new Map(),
@@ -27,6 +43,7 @@ export function createBusinessServiceServer(options = {}) {
       ...DEFAULT_LIMITS,
       ...(options.limits ?? {}),
     },
+    tokenConfig: createTokenConfig(options),
   };
 
   const server = http.createServer(async (request, response) => {
@@ -119,7 +136,7 @@ async function handleRequest(request, response, state) {
     const body = await readJson(request);
 
     if (action === "accept") {
-      const result = acceptCall(state, callId, body);
+      const result = await acceptCall(state, callId, body);
       sendJson(response, 200, result);
       return;
     }
@@ -146,7 +163,7 @@ async function handleRequest(request, response, state) {
 
   if (request.method === "POST" && url.pathname === "/api/observer/token") {
     const body = await readJson(request);
-    const token = issueObserverToken(state, body);
+    const token = await issueObserverToken(state, body);
     sendJson(response, 200, token);
     return;
   }
@@ -160,7 +177,7 @@ async function handleRequest(request, response, state) {
   ) {
     const roomId = segments[2];
     const body = await readJson(request);
-    const token = issueToken(state, roomId, body);
+    const token = await issueToken(state, roomId, body);
     sendJson(response, 200, token);
     return;
   }
@@ -226,7 +243,7 @@ function createCall(state, body) {
   return call;
 }
 
-function acceptCall(state, callId, body) {
+async function acceptCall(state, callId, body) {
   const call = getCall(state, callId);
   const acceptedMode = assertRoomMode(body.mode || call.requestedMode);
   const defaultChannelId = body.defaultChannelId || "field-camera";
@@ -252,7 +269,7 @@ function acceptCall(state, callId, body) {
   call.mediaPolicy = room.mediaPolicy;
   call.updatedAt = new Date().toISOString();
 
-  const hostToken = issueToken(state, room.roomId, {
+  const hostToken = await issueToken(state, room.roomId, {
     clientType: "or-windows",
     role: "or-host",
     identity: body.hostIdentity || `${call.targetEndpointId}-host`,
@@ -299,7 +316,7 @@ function createRoom(state, body) {
   return room;
 }
 
-function issueToken(state, roomId, body) {
+async function issueToken(state, roomId, body) {
   const room = state.rooms.get(roomId);
   if (!room) {
     throw new HttpError(404, "room-not-found", "Room does not exist");
@@ -310,35 +327,42 @@ function issueToken(state, roomId, body) {
   enforceParticipantLimit(room, clientType, body.mode);
 
   const grants = grantsFor(clientType, body.mode);
+  const identity = body.identity || `${clientType}-${randomUUID()}`;
+  const metadata = {
+    clientType,
+    mode: clientType === "web-observer" ? "watch-only" : body.mode || room.mode,
+    role,
+    roomCode: room.roomCode,
+  };
   const tokenPayload = {
-    type: "mock-livekit-token",
+    type: `${state.tokenConfig.mode}-livekit-token`,
     roomName: room.roomId,
     roomCode: room.roomCode,
-    identity: body.identity || `${clientType}-${randomUUID()}`,
+    identity,
     clientType,
     role,
     grants,
-    metadata: {
-      clientType,
-      mode: clientType === "web-observer" ? "watch-only" : body.mode || room.mode,
-    },
+    metadata,
     issuedAt: new Date().toISOString(),
   };
 
-  const token = `mock.${Buffer.from(JSON.stringify(tokenPayload)).toString("base64url")}`;
+  const token =
+    state.tokenConfig.mode === "real"
+      ? await issueRealLiveKitJwt(state.tokenConfig, room.roomId, identity, grants, metadata)
+      : `mock.${Buffer.from(JSON.stringify(tokenPayload)).toString("base64url")}`;
   state.issuedTokens.push(tokenPayload);
   incrementParticipantCount(room, clientType, body.mode);
 
   return {
     token,
-    tokenType: "mock",
-    livekitUrl: "ws://127.0.0.1:7880",
+    tokenType: state.tokenConfig.mode,
+    livekitUrl: state.tokenConfig.livekitUrl,
     room,
     grants,
   };
 }
 
-function issueObserverToken(state, body) {
+async function issueObserverToken(state, body) {
   const roomCode = requiredString(body.roomCode, "roomCode");
   const room = [...state.rooms.values()].find(
     (candidate) => candidate.roomCode === roomCode || candidate.roomId === roomCode,
@@ -354,6 +378,30 @@ function issueObserverToken(state, body) {
     mode: "watch",
     identity: body.identity,
   });
+}
+
+async function issueRealLiveKitJwt(tokenConfig, roomName, identity, grants, metadata) {
+  if (!tokenConfig.apiKey || !tokenConfig.apiSecret) {
+    throw new HttpError(
+      500,
+      "livekit-credentials-missing",
+      "LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required for real token mode",
+    );
+  }
+
+  const token = new AccessToken(tokenConfig.apiKey, tokenConfig.apiSecret, {
+    identity,
+    ttl: tokenConfig.ttlSeconds,
+  });
+  token.metadata = JSON.stringify(metadata);
+  token.addGrant({
+    roomJoin: true,
+    room: roomName,
+    canPublish: grants.canPublish,
+    canSubscribe: grants.canSubscribe,
+    canPublishData: grants.canPublishData,
+  });
+  return token.toJwt();
 }
 
 function grantsFor(clientType, mode) {
@@ -478,6 +526,8 @@ function snapshotState(state) {
       metadata: token.metadata,
     })),
     limits: state.limits,
+    tokenMode: state.tokenConfig.mode,
+    livekitUrl: state.tokenConfig.livekitUrl,
   };
 }
 

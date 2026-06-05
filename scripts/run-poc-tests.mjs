@@ -6,9 +6,12 @@ const checks = [
   ["run", "build"],
   ["run", "web-observer:poc:build"],
   ["run", "server:poc:smoke"],
+  ["run", "server:poc:real-token-smoke"],
   ["run", "web-observer:poc:smoke"],
   ["run", "media-worker:poc:smoke"],
+  ["run", "media-worker:native-readiness:smoke"],
   ["run", "media-worker:device-probe:smoke"],
+  ["run", "media-worker:usb4-validate:smoke"],
   ["run", "recording:poc:smoke"],
 ];
 

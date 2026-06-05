@@ -235,3 +235,34 @@
   - 当前仍未提交 git；提交 PoC 基线需要用户明确确认。
 - 下一步：
   - 建议先提交当前 PoC 基线，再进入真实 LiveKit JWT、Native Worker 技术路线和 4 路 USB 采集卡现场验证。
+
+## 真实 LiveKit JWT / Native Worker / 4 路 USB 验证阶段
+
+- 状态：in_progress
+- 开始时间：2026-06-05
+- 修改文件：
+  - `package.json`
+  - `package-lock.json`
+  - `scripts/run-poc-tests.mjs`
+  - `server-poc/server.mjs`
+  - `server-poc/README.md`
+  - `server-poc/real-token-smoke.mjs`
+  - `media-worker-poc/native-readiness.mjs`
+  - `media-worker-poc/native-readiness-smoke.mjs`
+  - `media-worker-poc/usb4-validate.mjs`
+  - `media-worker-poc/usb4-validate-smoke.mjs`
+  - `docs/next-stage-real-livekit-native-usb.md`
+  - `docs/README.md`
+- 验证：
+  - 执行 `npm run server:poc:real-token-smoke`：通过，真实 JWT 结构和权限边界正确。
+  - 执行 `npm run server:poc:smoke`：通过，mock 模式未被破坏。
+  - 执行 `npm run media-worker:native-readiness`：通过，状态 `ready`。
+  - 执行 `npm run media-worker:native-readiness:smoke`：通过。
+  - 执行 `npm run media-worker:usb4-validate:smoke`：通过。
+  - 执行 `npm run media-worker:usb4-validate`：返回 `blocked`，原因是当前仅检测到 1 路视频设备 `HD Webcam`，不足 4 路。
+  - 执行 `npm run test:all:poc`：通过，已包含真实 JWT smoke、Native readiness smoke 和 USB4 validate smoke。
+- 阻塞：
+  - 4 路 USB 现场验证需要接入至少 4 路 USB 采集卡或 UVC 视频设备。
+- 下一步：
+  - 用真实 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 启动业务服务，并由桌面 LiveKit PoC 面板连接真实房间。
+  - 接入 4 路 USB 硬件后执行 30 分钟 `media-worker:usb4-validate`。

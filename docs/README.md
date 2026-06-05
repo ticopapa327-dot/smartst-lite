@@ -34,6 +34,9 @@
 10. `poc-baseline-freeze.md`  
     AD-00 到 AD-09 暂停无人值守开发后的成果固化记录。
 
+11. `next-stage-real-livekit-native-usb.md`  
+    真实 LiveKit JWT、Native Worker 就绪检查和 4 路 USB 硬件验证阶段记录。
+
 ## 当前开发主线
 
 ```text
