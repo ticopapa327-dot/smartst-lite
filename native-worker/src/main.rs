@@ -950,6 +950,10 @@ fn build_capture_session_start(
             Ok(preference) => (preference, Value::Null),
             Err(error) => (None, json!(error)),
         };
+    let video_channel_bindings = params
+        .get("videoChannelBindings")
+        .cloned()
+        .unwrap_or(Value::Null);
     let audio_index = optional_u32(params, "audioIndex")
         .ok()
         .flatten()
@@ -969,6 +973,7 @@ fn build_capture_session_start(
             requested_channels,
             video_media_type_index,
             video_format_preference.as_ref(),
+            &video_channel_bindings,
         )
     });
     let audio_result =
@@ -1040,6 +1045,7 @@ fn build_capture_session_start(
             .map(VideoFormatPreference::to_json)
             .unwrap_or(Value::Null),
         "videoFormatPreferenceError": video_format_preference_error,
+        "videoChannelBindings": video_channel_bindings,
         "audioIndex": audio_index,
         "requestedChannelCount": requested_channels.len(),
         "boundVideoChannels": bound_video_channels,
@@ -1098,6 +1104,7 @@ fn build_video_session_start(
     requested_channels: &[String],
     media_type_index: u32,
     format_preference: Option<&VideoFormatPreference>,
+    channel_bindings: &Value,
 ) -> Result<(Vec<Value>, Vec<Value>, Value, usize), String> {
     let devices = records
         .iter()
@@ -1108,7 +1115,16 @@ fn build_video_session_start(
         .iter()
         .enumerate()
         .map(|(index, channel_id)| {
-            let Some(record) = records.get(index) else {
+            let (record, device_binding) = match select_video_record_for_channel(
+                &records,
+                channel_id,
+                index,
+                channel_bindings,
+            ) {
+                Ok(binding) => binding,
+                Err(error) => return unassigned_video_channel(channel_id, index, &error),
+            };
+            let Some(record) = record else {
                 return unassigned_video_channel(
                     channel_id,
                     index,
@@ -1150,6 +1166,7 @@ fn build_video_session_start(
                 "frameRate": frame_rate,
                 "priority": index + 1,
                 "device": video_device_record_to_json(record),
+                "deviceBinding": device_binding,
                 "mediaType": media_type_value,
                 "requestedMediaTypeIndex": media_type_index,
                 "mediaTypeSelection": selection_value,
@@ -1168,6 +1185,11 @@ fn build_video_session_start(
         "backend": "media-foundation",
         "count": devices.len(),
         "sessionBindingStatus": "bound",
+        "channelBindingStatus": if channel_bindings.is_null() {
+            "enumeration-order"
+        } else {
+            "explicit-supported"
+        },
         "capabilitiesStatus": if format_preference.is_some() {
             "preferred-media-type-probed"
         } else {
@@ -1175,6 +1197,107 @@ fn build_video_session_start(
         }
     });
     Ok((channels, devices, diag, bound_count))
+}
+
+fn select_video_record_for_channel<'a>(
+    records: &'a [VideoDeviceActivate],
+    channel_id: &str,
+    fallback_index: usize,
+    channel_bindings: &Value,
+) -> Result<(Option<&'a VideoDeviceActivate>, Value), String> {
+    let Some(selector) = video_channel_binding_selector(channel_bindings, channel_id) else {
+        let record = records.get(fallback_index);
+        return Ok((
+            record,
+            json!({
+                "mode": "enumeration-order",
+                "requestedChannelId": channel_id,
+                "requestedIndex": fallback_index,
+                "selectedIndex": record.map(|record| record.index),
+                "selectedDeviceId": record.map(|record| record.device_id.clone())
+            }),
+        ));
+    };
+
+    let selector_index = if selector.is_u64() {
+        selector
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+    } else {
+        optional_u32(selector, "index")?
+    };
+    let selector_device_id = selector.get("deviceId").and_then(Value::as_str);
+    let selector_native_id = selector.get("nativeId").and_then(Value::as_str);
+    let selector_display_name_contains = selector
+        .get("displayNameContains")
+        .and_then(Value::as_str)
+        .map(|value| value.to_ascii_lowercase());
+
+    let record = records.iter().find(|record| {
+        if let Some(index) = selector_index {
+            if record.index == index {
+                return true;
+            }
+        }
+        if let Some(device_id) = selector_device_id {
+            if record.device_id == device_id {
+                return true;
+            }
+        }
+        if let Some(native_id) = selector_native_id {
+            if record.native_id == native_id {
+                return true;
+            }
+        }
+        if let Some(display_name_contains) = selector_display_name_contains.as_ref() {
+            if record
+                .display_name
+                .to_ascii_lowercase()
+                .contains(display_name_contains)
+            {
+                return true;
+            }
+        }
+        false
+    });
+
+    let Some(record) = record else {
+        return Err(format!(
+            "video-channel-binding-not-found: channelId={channel_id}"
+        ));
+    };
+    Ok((
+        Some(record),
+        json!({
+            "mode": "explicit",
+            "requestedChannelId": channel_id,
+            "selector": selector,
+            "fallbackIndex": fallback_index,
+            "selectedIndex": record.index,
+            "selectedDeviceId": record.device_id.clone(),
+            "selectedNativeId": record.native_id.clone(),
+            "selectedDisplayName": record.display_name.clone()
+        }),
+    ))
+}
+
+fn video_channel_binding_selector<'a>(
+    channel_bindings: &'a Value,
+    channel_id: &str,
+) -> Option<&'a Value> {
+    if channel_bindings.is_null() {
+        return None;
+    }
+    if let Some(selector) = channel_bindings.get(channel_id) {
+        return Some(selector);
+    }
+    channel_bindings.as_array()?.iter().find(|selector| {
+        selector
+            .get("channelId")
+            .and_then(Value::as_str)
+            .map(|value| value == channel_id)
+            .unwrap_or(false)
+    })
 }
 
 fn build_audio_session_start(

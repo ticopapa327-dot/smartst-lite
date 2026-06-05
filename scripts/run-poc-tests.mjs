@@ -11,6 +11,7 @@ const checks = [
   ["run", "media-worker:poc:smoke"],
   ["run", "media-worker:native:smoke"],
   ["run", "media-worker:native:format-preference"],
+  ["run", "media-worker:native:channel-binding"],
   ["run", "media-worker:native:payload-consume"],
   ["run", "media-worker:native:video-pgm-export"],
   ["run", "media-worker:native:video-ppm-export"],
