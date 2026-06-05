@@ -288,6 +288,23 @@ struct VideoNv12FrameFormat {
     source_format: Value,
 }
 
+#[derive(Clone)]
+struct VideoFormatPreference {
+    subtype_fourcc: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    frame_rate: Option<f64>,
+    min_width: Option<u32>,
+    min_height: Option<u32>,
+    min_frame_rate: Option<f64>,
+    max_media_types: u32,
+}
+
+struct VideoMediaTypeSelection {
+    media_type: Value,
+    selection: Value,
+}
+
 struct AudioLevelPacketMeasurement {
     status: &'static str,
     format: &'static str,
@@ -659,11 +676,9 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
         .flatten()
         .unwrap_or(3)
         .clamp(1, 120);
-    for (channel_id, video_index) in video_thread_start_targets(&state.channels, &params) {
-        let media_type_index = state.capture_session["videoMediaTypeIndex"]
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(0);
+    for (channel_id, video_index, media_type_index) in
+        video_thread_start_targets(&state.channels, &params)
+    {
         state.video_runtimes.push(start_video_capture_runtime(
             channel_id.clone(),
             video_index,
@@ -930,6 +945,11 @@ fn build_capture_session_start(
         .flatten()
         .or_else(|| optional_u32(params, "mediaTypeIndex").ok().flatten())
         .unwrap_or(0);
+    let (video_format_preference, video_format_preference_error) =
+        match video_format_preference_from_params(params) {
+            Ok(preference) => (preference, Value::Null),
+            Err(error) => (None, json!(error)),
+        };
     let audio_index = optional_u32(params, "audioIndex")
         .ok()
         .flatten()
@@ -944,7 +964,12 @@ fn build_capture_session_start(
     };
 
     let video_result = with_video_device_activates(|records| {
-        build_video_session_start(records, requested_channels, video_media_type_index)
+        build_video_session_start(
+            records,
+            requested_channels,
+            video_media_type_index,
+            video_format_preference.as_ref(),
+        )
     });
     let audio_result =
         with_audio_capture_devices(|records| build_audio_session_start(records, audio_index));
@@ -1010,6 +1035,11 @@ fn build_capture_session_start(
         "realMediaSession": bound_video_channels > 0 || bound_audio_endpoints > 0,
         "startedAt": started_at,
         "videoMediaTypeIndex": video_media_type_index,
+        "videoFormatPreference": video_format_preference
+            .as_ref()
+            .map(VideoFormatPreference::to_json)
+            .unwrap_or(Value::Null),
+        "videoFormatPreferenceError": video_format_preference_error,
         "audioIndex": audio_index,
         "requestedChannelCount": requested_channels.len(),
         "boundVideoChannels": bound_video_channels,
@@ -1067,6 +1097,7 @@ fn build_video_session_start(
     records: Vec<VideoDeviceActivate>,
     requested_channels: &[String],
     media_type_index: u32,
+    format_preference: Option<&VideoFormatPreference>,
 ) -> Result<(Vec<Value>, Vec<Value>, Value, usize), String> {
     let devices = records
         .iter()
@@ -1085,10 +1116,17 @@ fn build_video_session_start(
                 );
             };
             bound_count += 1;
-            let media_type = read_video_media_type_for_record(record, media_type_index);
-            let (state, media_type_value, media_error) = match media_type {
-                Ok(value) => ("native-bound", value, Value::Null),
-                Err(error) => ("device-bound", Value::Null, json!(error)),
+            let media_type_selection =
+                select_video_media_type_for_record(record, media_type_index, format_preference);
+            let (state, media_type_value, selection_value, media_error) = match media_type_selection
+            {
+                Ok(selection) => (
+                    "native-bound",
+                    selection.media_type,
+                    selection.selection,
+                    Value::Null,
+                ),
+                Err(error) => ("device-bound", Value::Null, Value::Null, json!(error)),
             };
             let width = media_type_value
                 .get("width")
@@ -1113,6 +1151,8 @@ fn build_video_session_start(
                 "priority": index + 1,
                 "device": video_device_record_to_json(record),
                 "mediaType": media_type_value,
+                "requestedMediaTypeIndex": media_type_index,
+                "mediaTypeSelection": selection_value,
                 "mediaTypeError": media_error,
                 "realCapture": true,
                 "payloadTransport": "native-only",
@@ -1128,7 +1168,11 @@ fn build_video_session_start(
         "backend": "media-foundation",
         "count": devices.len(),
         "sessionBindingStatus": "bound",
-        "capabilitiesStatus": "default-media-type-probed"
+        "capabilitiesStatus": if format_preference.is_some() {
+            "preferred-media-type-probed"
+        } else {
+            "default-media-type-probed"
+        }
     });
     Ok((channels, devices, diag, bound_count))
 }
@@ -1313,7 +1357,7 @@ fn mark_channel_stats_status(channels: &mut [Value], channel_id: &str, status: &
     }
 }
 
-fn video_thread_start_targets(channels: &[Value], params: &Value) -> Vec<(String, u32)> {
+fn video_thread_start_targets(channels: &[Value], params: &Value) -> Vec<(String, u32, u32)> {
     let enabled = params
         .get("startVideoThread")
         .and_then(Value::as_bool)
@@ -1344,7 +1388,19 @@ fn video_thread_start_targets(channels: &[Value], params: &Value) -> Vec<(String
                         .checked_sub(1)
                 })
                 .and_then(|value| u32::try_from(value).ok())?;
-            Some((channel_id, video_index))
+            let media_type_index = channel
+                .get("mediaType")
+                .and_then(|media_type| media_type.get("mediaTypeIndex"))
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .or_else(|| {
+                    channel
+                        .get("requestedMediaTypeIndex")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                })
+                .unwrap_or(0);
+            Some((channel_id, video_index, media_type_index))
         })
         .take(limit)
         .collect()
@@ -3651,6 +3707,163 @@ fn read_video_media_type_for_record(
     result
 }
 
+fn select_video_media_type_for_record(
+    record: &VideoDeviceActivate,
+    fallback_media_type_index: u32,
+    format_preference: Option<&VideoFormatPreference>,
+) -> Result<VideoMediaTypeSelection, String> {
+    let Some(preference) = format_preference else {
+        let media_type = read_video_media_type_for_record(record, fallback_media_type_index)?;
+        return Ok(VideoMediaTypeSelection {
+            media_type: media_type.clone(),
+            selection: json!({
+                "mode": "index",
+                "requestedIndex": fallback_media_type_index,
+                "selectedIndex": fallback_media_type_index,
+                "preference": Value::Null,
+                "score": Value::Null,
+                "match": Value::Null
+            }),
+        });
+    };
+
+    let source: IMFMediaSource = unsafe {
+        record
+            .activate
+            .ActivateObject()
+            .map_err(format_windows_error)?
+    };
+    let result = (|| {
+        let reader = unsafe {
+            MFCreateSourceReaderFromMediaSource(&source, None::<&IMFAttributes>)
+                .map_err(format_windows_error)?
+        };
+        let mut best: Option<(u32, Value, f64, Value)> = None;
+        let mut inspected_count = 0u32;
+        for media_type_index in 0..preference.max_media_types {
+            let media_type = match unsafe {
+                reader.GetNativeMediaType(video_stream_index(), media_type_index)
+            } {
+                Ok(media_type) => media_type,
+                Err(_) => break,
+            };
+            inspected_count = inspected_count.saturating_add(1);
+            let media_type_json = media_type_to_json(&media_type, media_type_index);
+            let (score, match_details) = score_video_media_type(&media_type_json, preference);
+            let replace_best = best
+                .as_ref()
+                .map(|(_, _, best_score, _)| score < *best_score)
+                .unwrap_or(true);
+            if replace_best {
+                best = Some((media_type_index, media_type_json, score, match_details));
+            }
+        }
+
+        let Some((selected_index, media_type, score, match_details)) = best else {
+            return Err(format!(
+                "No video media types were available for preference scan. maxMediaTypes={}",
+                preference.max_media_types
+            ));
+        };
+
+        Ok(VideoMediaTypeSelection {
+            media_type,
+            selection: json!({
+                "mode": "preference",
+                "requestedIndexFallback": fallback_media_type_index,
+                "selectedIndex": selected_index,
+                "inspectedMediaTypes": inspected_count,
+                "preference": preference.to_json(),
+                "score": score,
+                "match": match_details
+            }),
+        })
+    })();
+    shutdown_media_source(&source, &record.activate);
+    result
+}
+
+fn score_video_media_type(media_type: &Value, preference: &VideoFormatPreference) -> (f64, Value) {
+    let subtype = media_type
+        .get("subtypeFourCc")
+        .or_else(|| media_type.get("subtype"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    let width = media_type
+        .get("width")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
+    let height = media_type
+        .get("height")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
+    let frame_rate = media_type
+        .get("frameRate")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let mut score = 0.0;
+
+    let subtype_matches = preference
+        .subtype_fourcc
+        .as_ref()
+        .map(|expected| {
+            subtype
+                .as_ref()
+                .map(|actual| actual.eq_ignore_ascii_case(expected))
+                .unwrap_or(false)
+        })
+        .unwrap_or(true);
+    if !subtype_matches {
+        score += 1_000_000.0;
+    }
+
+    if let Some(target_width) = preference.width {
+        score += (i64::from(width) - i64::from(target_width)).unsigned_abs() as f64 * 10.0;
+    }
+    if let Some(target_height) = preference.height {
+        score += (i64::from(height) - i64::from(target_height)).unsigned_abs() as f64 * 10.0;
+    }
+    if let Some(target_frame_rate) = preference.frame_rate {
+        score += (frame_rate - target_frame_rate).abs() * 100.0;
+    }
+    if let Some(min_width) = preference.min_width {
+        if width < min_width {
+            score += f64::from(min_width - width) * 10_000.0;
+        }
+    }
+    if let Some(min_height) = preference.min_height {
+        if height < min_height {
+            score += f64::from(min_height - height) * 10_000.0;
+        }
+    }
+    if let Some(min_frame_rate) = preference.min_frame_rate {
+        if frame_rate < min_frame_rate {
+            score += (min_frame_rate - frame_rate) * 100_000.0;
+        }
+    }
+
+    (
+        score,
+        json!({
+            "subtype": subtype,
+            "subtypeMatches": subtype_matches,
+            "width": width,
+            "height": height,
+            "frameRate": frame_rate,
+            "widthMatches": preference.width.map(|target| width == target),
+            "heightMatches": preference.height.map(|target| height == target),
+            "frameRateMatches": preference
+                .frame_rate
+                .map(|target| (frame_rate - target).abs() < 0.01),
+            "minWidthSatisfied": preference.min_width.map(|target| width >= target),
+            "minHeightSatisfied": preference.min_height.map(|target| height >= target),
+            "minFrameRateSatisfied": preference.min_frame_rate.map(|target| frame_rate >= target)
+        }),
+    )
+}
+
 fn capture_video_sample_for_record(
     record: &VideoDeviceActivate,
     media_type_index: u32,
@@ -4027,6 +4240,72 @@ fn guid_fourcc(guid: &GUID) -> Option<String> {
     }
 }
 
+impl VideoFormatPreference {
+    fn to_json(&self) -> Value {
+        json!({
+            "subtypeFourCc": self.subtype_fourcc.clone(),
+            "width": self.width,
+            "height": self.height,
+            "frameRate": self.frame_rate,
+            "minWidth": self.min_width,
+            "minHeight": self.min_height,
+            "minFrameRate": self.min_frame_rate,
+            "maxMediaTypes": self.max_media_types
+        })
+    }
+}
+
+fn video_format_preference_from_params(
+    params: &Value,
+) -> Result<Option<VideoFormatPreference>, String> {
+    let Some(preference) = params.get("videoFormatPreference") else {
+        return Ok(None);
+    };
+    if preference.is_null() {
+        return Ok(None);
+    }
+    if !preference.is_object() {
+        return Err("videoFormatPreference must be an object".to_string());
+    }
+    let subtype_fourcc = preference
+        .get("subtypeFourCc")
+        .or_else(|| preference.get("subtype"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty());
+    let width = optional_u32(preference, "width")?;
+    let height = optional_u32(preference, "height")?;
+    let frame_rate = optional_f64(preference, "frameRate")?;
+    let min_width = optional_u32(preference, "minWidth")?;
+    let min_height = optional_u32(preference, "minHeight")?;
+    let min_frame_rate = optional_f64(preference, "minFrameRate")?;
+    let max_media_types = optional_u32(preference, "maxMediaTypes")?
+        .unwrap_or(128)
+        .clamp(1, 512);
+
+    if subtype_fourcc.is_none()
+        && width.is_none()
+        && height.is_none()
+        && frame_rate.is_none()
+        && min_width.is_none()
+        && min_height.is_none()
+        && min_frame_rate.is_none()
+    {
+        return Err("videoFormatPreference must include at least one selector".to_string());
+    }
+
+    Ok(Some(VideoFormatPreference {
+        subtype_fourcc,
+        width,
+        height,
+        frame_rate,
+        min_width,
+        min_height,
+        min_frame_rate,
+        max_media_types,
+    }))
+}
+
 fn optional_u32(params: &Value, field_name: &str) -> Result<Option<u32>, String> {
     let Some(value) = params.get(field_name) else {
         return Ok(None);
@@ -4037,6 +4316,19 @@ fn optional_u32(params: &Value, field_name: &str) -> Result<Option<u32>, String>
     u32::try_from(number)
         .map(Some)
         .map_err(|_| format!("{field_name} is too large for u32"))
+}
+
+fn optional_f64(params: &Value, field_name: &str) -> Result<Option<f64>, String> {
+    let Some(value) = params.get(field_name) else {
+        return Ok(None);
+    };
+    let Some(number) = value.as_f64() else {
+        return Err(format!("{field_name} must be a finite number"));
+    };
+    if !number.is_finite() || number < 0.0 {
+        return Err(format!("{field_name} must be a non-negative finite number"));
+    }
+    Ok(Some(number))
 }
 
 fn video_stream_index() -> u32 {

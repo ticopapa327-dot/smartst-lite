@@ -35,6 +35,7 @@
     "media-worker:native:video-loop": "node native-worker/video-loop.mjs",
     "media-worker:native:audio-probe": "node native-worker/audio-probe.mjs",
     "media-worker:native:session": "node native-worker/session.mjs",
+    "media-worker:native:format-preference": "node native-worker/format-preference.mjs",
     "media-worker:native:session-stress": "node native-worker/session-stress.mjs",
     "media-worker:native:payload-consume": "node native-worker/payload-consume.mjs",
     "media-worker:native:video-pgm-export": "node native-worker/video-pgm-export.mjs",

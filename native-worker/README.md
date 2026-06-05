@@ -16,6 +16,7 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 - `probeAudioFormat` reads WASAPI mix format for capture endpoints.
 - `captureAudioBuffer` verifies short WASAPI capture buffer access and returns packet/frame statistics only.
 - Video threads expose a native-only bounded `frameQueue` that copies real Media Foundation sample payloads into native memory while keeping JSON Lines as status-only.
+- `start` accepts optional `videoFormatPreference` to select the nearest native Media Foundation media type by subtype, resolution, and frame rate before starting capture threads.
 - The WASAPI audio thread exposes a native-only bounded PCM packet payload queue and status counters. Preview rendering, AEC processing, LiveKit native publishing, audio resampling, and real recording are still not implemented.
 
 ## Run
@@ -100,6 +101,21 @@ $env:SMARTST_NATIVE_AUDIO_INDEX="0"
 $env:SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
 $env:SMARTST_NATIVE_SESSION_HOLD_MS="500"
 npm run media-worker:native:session
+```
+
+## Probe Native Video Format Preference
+
+```powershell
+npm run media-worker:native:format-preference
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_VIDEO_INDEX="0"
+$env:SMARTST_NATIVE_VIDEO_PREFERRED_SUBTYPE="NV12"
+$env:SMARTST_NATIVE_VIDEO_FORMAT_MAX_TYPES="128"
+npm run media-worker:native:format-preference
 ```
 
 ## Stress Native Capture Session
@@ -259,6 +275,8 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 `captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
 
 `start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, pass `videoFrameQueueCapacity` / `SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the native-only bounded frame payload queue, or pass `audioPayloadQueueCapacity` / `SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY` to size the native-only bounded audio packet payload queue.
+
+When `videoFormatPreference` is present, `start` scans native Media Foundation media types and chooses the nearest match by subtype, width, height, frame rate, and optional minimum constraints. The channel response includes `requestedMediaTypeIndex` and `mediaTypeSelection`; the capture thread uses the selected channel `mediaType.mediaTypeIndex`. Without `videoFormatPreference`, behavior remains index-based and defaults to media type index `0`.
 
 Each video thread reports `frameQueue` statistics with `mode=native-payload-bounded` and `payloadTransport=native-only`. The worker copies each Media Foundation sample into a bounded native memory queue and reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export frame payloads through JSON Lines. `consumeVideoPayloadQueue` drains queued native payload frames and returns only metadata and byte counters, so it can validate the future preview/publisher/recorder consumer boundary without returning frame bytes. Until a real consumer is attached, new payload frames overwrite the bounded queue after capacity is reached and increment `dropCount`.
 
