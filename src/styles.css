@@ -1061,6 +1061,12 @@ input:focus {
   white-space: nowrap;
 }
 
+.workbench-status-stack {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
 .hmi-panel {
   min-width: 0;
   padding: 16px;
@@ -1509,6 +1515,14 @@ input:focus {
 
 .hmi-status-dot.warn {
   background: var(--hmi-amber);
+}
+
+.hmi-status-dot.ok {
+  background: var(--hmi-green);
+}
+
+.hmi-status-dot.error {
+  background: var(--hmi-red);
 }
 
 @media (max-width: 1320px) {

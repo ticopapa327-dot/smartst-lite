@@ -61,6 +61,20 @@ struct RtspPreviewSession {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct NativeWorkerReadiness {
+    status: String,
+    workspace_root: String,
+    manifest_path: String,
+    executable_path: String,
+    manifest_exists: bool,
+    executable_exists: bool,
+    cargo_available: bool,
+    cargo_version: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RtspStreamResolution {
     rtsp_url: String,
     profile_token: String,
@@ -160,6 +174,42 @@ fn append_log(entry: Value) -> Result<(), String> {
     writeln!(file, "{line}").map_err(|error| format!("Failed to write log entry: {error}"))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn get_native_worker_readiness() -> Result<NativeWorkerReadiness, String> {
+    let workspace_root = workspace_root_dir()?;
+    let manifest_path = workspace_root.join("native-worker").join("Cargo.toml");
+    let executable_path = native_worker_executable_path(&workspace_root);
+    let manifest_exists = manifest_path.is_file();
+    let executable_exists = executable_path.is_file();
+    let cargo_version = command_version("cargo", "--version");
+    let cargo_available = cargo_version.is_some();
+    let status = if manifest_exists && (executable_exists || cargo_available) {
+        "ready"
+    } else if manifest_exists {
+        "source-only"
+    } else {
+        "missing"
+    };
+    let message = match status {
+        "ready" if executable_exists => "Native Worker debug binary is available.",
+        "ready" => "Native Worker source is available and Cargo can build it.",
+        "source-only" => "Native Worker source exists, but Cargo/debug binary is unavailable.",
+        _ => "Native Worker source is missing from the workspace.",
+    };
+
+    Ok(NativeWorkerReadiness {
+        status: status.to_string(),
+        workspace_root: workspace_root.to_string_lossy().to_string(),
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        executable_path: executable_path.to_string_lossy().to_string(),
+        manifest_exists,
+        executable_exists,
+        cargo_available,
+        cargo_version,
+        message: message.to_string(),
+    })
 }
 
 #[tauri::command]
@@ -1104,6 +1154,59 @@ fn command_is_available(program: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn command_version(program: &str, version_arg: &str) -> Option<String> {
+    let mut command = Command::new(program);
+    command
+        .arg(version_arg)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    apply_no_window(&mut command);
+
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+fn workspace_root_dir() -> Result<PathBuf, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut candidates = Vec::new();
+    if let Some(parent) = manifest_dir.parent() {
+        candidates.push(parent.to_path_buf());
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.clone());
+        if let Some(parent) = current_dir.parent() {
+            candidates.push(parent.to_path_buf());
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.join("native-worker").join("Cargo.toml").is_file())
+        .ok_or_else(|| "Native Worker workspace root not found.".to_string())
+}
+
+fn native_worker_executable_path(workspace_root: &std::path::Path) -> PathBuf {
+    let executable_name = if cfg!(windows) {
+        "smartst-native-worker.exe"
+    } else {
+        "smartst-native-worker"
+    };
+
+    workspace_root
+        .join("native-worker")
+        .join("target")
+        .join("debug")
+        .join(executable_name)
+}
+
 fn sanitize_camera_id(camera_id: &str) -> String {
     let sanitized = camera_id
         .chars()
@@ -1407,6 +1510,7 @@ fn main() {
             load_config,
             save_config,
             append_log,
+            get_native_worker_readiness,
             resolve_rtsp_stream_uri,
             start_rtsp_preview,
             stop_rtsp_preview,

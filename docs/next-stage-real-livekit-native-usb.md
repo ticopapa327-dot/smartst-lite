@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 32.7 秒。
+- 结果：通过，耗时约 32.6 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -425,7 +425,40 @@ stop.join=ok
 - 当前音量数值只代表本机测试环境输入电平，不作为验收阈值；后续需要增加静音、讲话声和外接全向麦的对比样本。
 - `stop` 会设置停止标志并 join 线程；`shutdown` 在 worker 仍运行时也会先清理会话。
 
-## 6. 4 路 USB 验证
+## 6. 桌面端 Native Worker readiness 入口
+
+新增 Tauri 命令：
+
+```text
+get_native_worker_readiness
+```
+
+返回内容：
+
+```text
+status=ready | source-only | missing
+manifestPath=native-worker/Cargo.toml
+executablePath=native-worker/target/debug/smartst-native-worker(.exe)
+cargoAvailable=true | false
+cargoVersion=<cargo --version>
+```
+
+前端工作台新增 Native Worker 状态条：
+
+- Tauri 桌面运行时调用 `get_native_worker_readiness`。
+- 浏览器/普通 Vite 环境返回 `desktop-only`，不抛异常。
+- 该入口只做路径、manifest、debug binary 和 Cargo 可用性诊断，不启动采集、不占用摄像头、不发布 LiveKit。
+
+验证：
+
+```powershell
+cargo check --manifest-path src-tauri/Cargo.toml
+npm run build
+```
+
+结果：均通过；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+
+## 7. 4 路 USB 验证
 
 新增入口：
 
@@ -487,7 +520,7 @@ $env:SMARTST_USB4_DURATION_SECONDS="7200"
 npm run media-worker:usb4-validate
 ```
 
-## 7. 本阶段停止条件
+## 8. 本阶段停止条件
 
 必须停止并先处理问题的情况：
 
@@ -498,12 +531,13 @@ npm run media-worker:usb4-validate
 - `npm run media-worker:usb4-validate` 在 4 路硬件接入后仍返回 `blocked` 或 `failed`。
 - 4 路 30 分钟验证中任一路黑屏、无帧、错路或设备掉线。
 
-## 8. 下一步
+## 9. 下一步
 
 建议顺序：
 
 1. 准备真实 LiveKit server 和服务端 API key/secret。
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 进入 WASAPI 连续音频采集线程、重采样/AEC 边界验证和音频统计上报。
-5. 将 Native Worker 的 `start/stop/status` 从 mock 状态机推进到真实采集会话状态机。
+4. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 metadata frameQueue。
+5. 进入 WASAPI 静音/讲话/外接全向麦对比样本、重采样和 AEC 边界验证。
+6. 将 Native Worker readiness 入口推进到真实 start/status/stop 控制面板，不通过 UI 直接传输媒体 payload。

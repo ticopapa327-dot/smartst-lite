@@ -263,6 +263,10 @@
   - `native-worker/audio-probe.mjs`
   - `native-worker/session.mjs`
   - `native-worker/session-stress.mjs`
+  - `src-tauri/src/main.rs`
+  - `src/services/nativeWorkerService.ts`
+  - `src/components/WorkbenchPage.tsx`
+  - `src/styles.css`
   - `docs/next-stage-real-livekit-native-usb.md`
   - `docs/README.md`
 - 验证：
@@ -282,7 +286,9 @@
   - 执行 `npm run media-worker:native:audio-probe`：通过，第 0 路 `麦克风阵列 (Senary Audio)` mix format 为 48000Hz、2ch、EXTENSIBLE/IEEE_FLOAT、32-bit、blockAlign=8；500ms WASAPI capture 返回 `status=buffer-captured`、`packetCount=49`、`capturedFrames=23520`、`capturedBytes=188160`、`silentPackets=0`、`discontinuityPackets=1`。
   - 执行 `npm run media-worker:native:session`：通过，`start/status/stop` 返回真实采集会话骨架并默认启动 Media Foundation 视频统计线程和 WASAPI 音频统计线程；当前绑定 1 路视频 `HD Webcam`、1 路音频 `麦克风阵列 (Senary Audio)`，第 2 个请求通道为 `waiting-for-device`；500ms status 返回 `continuousVideoThreadCount=1`、`videoCaptureThreads.length=1`、`frameQueue.mode=metadata-only-bounded`、`frameQueue.capacity=3`、`frameQueue.pushCount=3`、`frameQueue.dropCount=0`、`videoCaptureThread.state=running`、`sampleCount=3`、`readCount=4`、`measuredFps=6.45`、`streamFlagNames=stream-tick`，以及 `audioCaptureThread.state=running`、`packetCount=45`、`capturedFrames=21600`、`capturedBytes=172800`、`audioLevel.status=measured`、`audioLevel.format=float32`、`audioLevel.rms=0.000012`、`audioLevel.peak=0.000342`、`discontinuityPackets=1`；`stop` 后 `captureSession.state=idle` 且 `stats.realMediaSession=false`。
   - 执行 `npm run media-worker:native:session-stress`：通过，连续 3 轮 start/status/stop，每轮 hold 1000ms；当前 1 路硬件下 `videoThreadCount=1`，视频样本数均为 8，`videoFrameQueuePushCount` 均为 8，`videoFrameQueueDropCount` 均为 5，音频 packet 数为 95/96/95，三轮 `audioLevel.status=measured`、`audioLevel.format=float32`，三轮 `stoppedState=idle`。
-  - 执行 `npm run test:all:poc`：通过，完整回归耗时约 32.7 秒；仍有 Vite chunk 体积超过 500 kB 警告。
+  - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness` 命令可编译。
+  - 执行 `npm run build`：通过，Workbench 已接入 Native Worker readiness 状态条；普通浏览器环境返回 `desktop-only`，不启动采集。
+  - 执行 `npm run test:all:poc`：通过，完整回归耗时约 32.6 秒；仍有 Vite chunk 体积超过 500 kB 警告。
 - 4 路 USB 基础测试：
   - 接入设备：`HD Webcam`、`thinkplus Video Camera FHD`、`罗技高清网络摄像机 C930c`、`Rapoo Camera`。
   - 修正 `media-worker:usb4-validate` 为 4 路并发打开，不再逐路顺序打开。
@@ -298,10 +304,11 @@
   - 已增加 `measureVideoFrames`，可验证单路 Media Foundation 连续帧读取和帧率统计；真实帧 payload 仍留在 native 侧，不通过 JSON Lines 传输。
   - 已增加 `probeAudioFormat` 和 `captureAudioBuffer`，可验证 WASAPI mix format 和短时 capture buffer 读取。
   - 当前已接入多路视频统计线程结构、metadata-only 有界帧队列统计、WASAPI RMS/peak 音量统计和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入真实帧 payload 队列、预览纹理、音频重采样/AEC、LiveKit native publisher 或真实录像。
+  - 桌面端已新增 Native Worker readiness 诊断入口和工作台状态条；该入口只检查 manifest/debug binary/Cargo，不启动 Native Worker session，不占用摄像头。
 - 阻塞：
   - 当前 4 路摄像头基础链路可打开，但不满足 4 路 30fps 实时验收；按当前阶段决策，该性能降级只记录为开发机限制，不阻塞后续 Native Worker 开发。
   - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。
 - 下一步：
   - 用真实 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 启动业务服务，并由桌面 LiveKit PoC 面板连接真实房间。
   - 将 WASAPI 连续音频线程推进到静音/讲话/外接全向麦对比样本、重采样和 AEC 边界验证。
-  - 将 Native Worker 会话骨架推进到真实帧 payload 队列消费者、4 路硬件递增验证和更长时间的 stop/join 稳定性验证。
+  - 将 Native Worker readiness 入口推进到真实 start/status/stop 控制面板，并执行 4 路硬件递增验证和更长时间的 stop/join 稳定性验证。
