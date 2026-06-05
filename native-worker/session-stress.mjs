@@ -12,6 +12,7 @@ const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera,e
 const iterations = readIntegerEnv("SMARTST_NATIVE_SESSION_STRESS_ITERATIONS", 3);
 const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 1000);
 const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
+const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
 const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
@@ -70,6 +71,7 @@ try {
     const started = await request("start", {
       channels,
       videoMediaTypeIndex,
+      ...(videoThreadLimit === undefined ? {} : { videoThreadLimit }),
       audioIndex,
       startVideoThread: true,
       startAudioThread: true,
@@ -80,11 +82,15 @@ try {
     await new Promise((resolve) => setTimeout(resolve, holdMs));
     const status = await request("status");
     assert(status.state === "running", `iteration ${iteration}: status running`);
-    const videoThread = status.stats?.videoCaptureThread;
+    const videoThreads = getVideoThreads(status.stats);
     const audioThread = status.stats?.audioCaptureThread;
     if (started.captureSession?.boundVideoChannels > 0) {
-      assert(videoThread?.state === "running", `iteration ${iteration}: video thread running`);
-      assert(videoThread.sampleCount > 0, `iteration ${iteration}: video samples captured`);
+      assert(videoThreads.length > 0, `iteration ${iteration}: video threads reported`);
+      assert(status.stats?.videoCaptureThreadCount === videoThreads.length, `iteration ${iteration}: video thread count matches`);
+      for (const thread of videoThreads) {
+        assert(thread.state === "running", `iteration ${iteration}: video thread ${thread.channelId} running`);
+        assert(thread.sampleCount > 0, `iteration ${iteration}: video samples captured on ${thread.channelId}`);
+      }
     }
     if (started.captureSession?.boundAudioEndpoints > 0) {
       assert(audioThread?.state === "running", `iteration ${iteration}: audio thread running`);
@@ -101,10 +107,15 @@ try {
       holdMs,
       mode: started.captureSession?.mode,
       boundVideoChannels: started.captureSession?.boundVideoChannels,
+      videoThreadCount: videoThreads.length,
       boundAudioEndpoints: started.captureSession?.boundAudioEndpoints,
-      videoState: videoThread?.state ?? null,
-      videoSamples: videoThread?.sampleCount ?? 0,
-      videoMeasuredFps: videoThread?.measuredFps ?? null,
+      videoStates: videoThreads.map((thread) => ({
+        channelId: thread.channelId,
+        state: thread.state,
+        sampleCount: thread.sampleCount ?? 0,
+        measuredFps: thread.measuredFps ?? null,
+      })),
+      videoSamples: sumBy(videoThreads, "sampleCount"),
       audioState: audioThread?.state ?? null,
       audioPackets: audioThread?.packetCount ?? 0,
       audioFrames: audioThread?.capturedFrames ?? 0,
@@ -170,6 +181,16 @@ function readIntegerEnv(name, fallback) {
     throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
+}
+
+function getVideoThreads(stats) {
+  if (Array.isArray(stats?.videoCaptureThreads)) return stats.videoCaptureThreads;
+  if (stats?.videoCaptureThread) return [stats.videoCaptureThread];
+  return [];
+}
+
+function sumBy(items, key) {
+  return items.reduce((total, item) => total + (Number.isFinite(item?.[key]) ? item[key] : 0), 0);
 }
 
 function assert(condition, message) {

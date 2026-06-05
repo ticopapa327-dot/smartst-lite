@@ -66,8 +66,15 @@ try {
   assert(status.state === "running", "status reports running");
   assert(status.captureSession?.state === "running", "status reports capture session");
   if (started.captureSession?.boundVideoChannels > 0) {
-    assert(status.stats?.videoCaptureThread, "status reports video capture thread stats");
-    assert(["starting", "initializing", "running", "stopped", "failed"].includes(status.stats.videoCaptureThread.state), "video thread state is explicit");
+    const videoThreads = getVideoThreads(status.stats);
+    assert(videoThreads.length > 0, "status reports video capture thread stats");
+    assert(status.stats.videoCaptureThread, "status keeps first video capture thread for compatibility");
+    assert(status.stats.videoCaptureThreadCount === videoThreads.length, "video thread count matches stats array");
+    for (const thread of videoThreads) {
+      assert(["starting", "initializing", "running", "stopped", "failed"].includes(thread.state), "video thread state is explicit");
+      assert(thread.channelId, "video thread channel id is reported");
+      assert(Number.isInteger(thread.deviceIndex), "video thread device index is reported");
+    }
   }
   if (started.captureSession?.boundAudioEndpoints > 0) {
     assert(status.stats?.audioCaptureThread, "status reports audio capture thread stats");
@@ -171,6 +178,12 @@ function waitForEvent(category, name) {
 
 function hasEvent(category, name) {
   return events.some((event) => event.category === category && event.name === name);
+}
+
+function getVideoThreads(stats) {
+  if (Array.isArray(stats?.videoCaptureThreads)) return stats.videoCaptureThreads;
+  if (stats?.videoCaptureThread) return [stats.videoCaptureThread];
+  return [];
 }
 
 function assert(condition, message) {

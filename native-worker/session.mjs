@@ -10,6 +10,7 @@ const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera,e
   .map((channel) => channel.trim())
   .filter(Boolean);
 const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
+const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
 const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
 const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 500);
 
@@ -66,6 +67,7 @@ try {
   const started = await request("start", {
     channels,
     videoMediaTypeIndex,
+    ...(videoThreadLimit === undefined ? {} : { videoThreadLimit }),
     audioIndex,
     startVideoThread: true,
     startAudioThread: true,

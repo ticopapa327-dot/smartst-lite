@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 32.5 秒。
+- 结果：通过，耗时约 32.2 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -252,6 +252,8 @@ npm run media-worker:native:session
 ```text
 测试时间：2026-06-06
 holdMs=500
+continuousVideoThreadCount=1
+videoCaptureThreads.length=1
 videoCaptureThread.state=running
 videoCaptureThread.channelId=field-camera
 videoCaptureThread.device=HD Webcam
@@ -267,7 +269,8 @@ stop.join=ok
 
 边界：
 
-- 当前只启动第一路已绑定视频通道的统计线程，尚未做多路视频线程管理。
+- 当前实现会为每个已绑定视频通道启动一个 Media Foundation 统计线程，并通过 `stats.videoCaptureThreads[]` 返回多路状态；`stats.videoCaptureThread` 保留为第一路线程的兼容字段。
+- 本轮本机只枚举到 1 路视频设备，因此只验证了多路结构和单路线程实例；4 路采集卡现场验收时必须重新执行 1/2/4 路递增验证。
 - 线程只统计样本和时间线，不传输帧 payload，不做帧队列、预览纹理、编码或录像。
 
 重复启停稳定性验证：
@@ -284,30 +287,33 @@ iterations=3
 holdMs=1000
 
 iteration 1:
+videoThreadCount=1
 videoSamples=8
-videoMeasuredFps=8.21
-audioPackets=93
-audioFrames=44640
+videoMeasuredFps=8.35
+audioPackets=96
+audioFrames=46080
 stoppedState=idle
 
 iteration 2:
+videoThreadCount=1
 videoSamples=8
-videoMeasuredFps=8.32
-audioPackets=96
-audioFrames=46080
+videoMeasuredFps=8.33
+audioPackets=97
+audioFrames=46560
 stoppedState=idle
 
 iteration 3:
+videoThreadCount=1
 videoSamples=8
-videoMeasuredFps=8.32
-audioPackets=96
-audioFrames=46080
+videoMeasuredFps=8.39
+audioPackets=97
+audioFrames=46560
 stoppedState=idle
 ```
 
 结论：
 
-- 当前单路视频线程和单路音频线程可连续完成 3 次 start/status/stop，未出现线程残留或停止后运行态误报。
+- 当前视频线程数组和单路音频线程可连续完成 3 次 start/status/stop，未出现线程残留或停止后运行态误报。
 - 该验证时间仍很短，只能证明启停控制链路可重复；不能替代 30 分钟/2 小时稳定性验收。
 
 WASAPI 阶段复测时的当前设备状态：

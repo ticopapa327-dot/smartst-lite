@@ -49,7 +49,7 @@ struct WorkerState {
     recording: Value,
     livekit: Value,
     stats: Value,
-    video_runtime: Option<VideoCaptureRuntime>,
+    video_runtimes: Vec<VideoCaptureRuntime>,
     audio_runtime: Option<AudioCaptureRuntime>,
     last_error: Option<Value>,
 }
@@ -157,7 +157,7 @@ impl WorkerState {
             recording: idle_recording(),
             livekit: idle_livekit(),
             stats: idle_stats(),
-            video_runtime: None,
+            video_runtimes: Vec::new(),
             audio_runtime: None,
             last_error: None,
         }
@@ -167,7 +167,7 @@ impl WorkerState {
         let stats = stats_with_runtimes(
             &self.stats,
             self.audio_runtime.as_ref(),
-            self.video_runtime.as_ref(),
+            &self.video_runtimes,
         );
         json!({
             "processId": self.process_id,
@@ -316,17 +316,21 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = session_start.stats;
-    if let Some((channel_id, video_index)) = video_thread_start_target(&state.channels, &params) {
+    for (channel_id, video_index) in video_thread_start_targets(&state.channels, &params) {
         let media_type_index = state.capture_session["videoMediaTypeIndex"]
             .as_u64()
             .and_then(|value| u32::try_from(value).ok())
             .unwrap_or(0);
-        state.video_runtime = Some(start_video_capture_runtime(
-            channel_id,
+        state.video_runtimes.push(start_video_capture_runtime(
+            channel_id.clone(),
             video_index,
             media_type_index,
         ));
+        mark_channel_stats_status(&mut state.channels, &channel_id, "running");
+    }
+    if !state.video_runtimes.is_empty() {
         state.capture_session["continuousVideoThreads"] = json!("running");
+        state.capture_session["continuousVideoThreadCount"] = json!(state.video_runtimes.len());
     }
     if should_start_audio_thread(&params, &state.capture_session) {
         let audio_index = state.capture_session["audioIndex"]
@@ -344,7 +348,7 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
 
     emit_event("device", "snapshot", session_start.device_snapshot);
     emit_event("capture", "session-started", state.capture_session.clone());
-    if let Some(video_runtime) = state.video_runtime.as_ref() {
+    for video_runtime in &state.video_runtimes {
         emit_event("video", "capture-thread-started", video_runtime.snapshot());
     }
     if let Some(audio_runtime) = state.audio_runtime.as_ref() {
@@ -375,7 +379,7 @@ fn stop_worker(state: &mut WorkerState) -> Value {
         );
     }
 
-    let video_thread_stopped = stop_video_capture_runtime(state);
+    let video_threads_stopped = stop_video_capture_runtimes(state);
     let audio_thread_stopped = stop_audio_capture_runtime(state);
     let previous_session = state.capture_session.clone();
     state.state = "idle".to_string();
@@ -385,7 +389,7 @@ fn stop_worker(state: &mut WorkerState) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = idle_stats();
-    if let Some(video_stats) = video_thread_stopped {
+    for video_stats in video_threads_stopped {
         emit_event("video", "capture-thread-stopped", video_stats);
     }
     if let Some(audio_stats) = audio_thread_stopped {
@@ -494,6 +498,7 @@ fn build_capture_session_start(
         "audio": audio,
         "mediaPayloadTransport": "native-only",
         "continuousVideoThreads": "not-started",
+        "continuousVideoThreadCount": 0,
         "continuousAudioThreads": "not-started",
         "previewStatus": "not-rendered",
         "livekitStatus": "not-published",
@@ -503,7 +508,12 @@ fn build_capture_session_start(
     let stats = json!({
         "uptimeMs": 0,
         "framesProduced": 0,
+        "videoBytesCaptured": 0,
+        "videoCaptureThreadCount": 0,
+        "videoCaptureThreads": [],
         "audioPacketsProduced": 0,
+        "audioFramesCaptured": 0,
+        "audioBytesCaptured": 0,
         "syntheticFramesProduced": 0,
         "boundVideoChannels": bound_video_channels,
         "unassignedVideoChannels": unassigned_video_channels,
@@ -717,6 +727,7 @@ fn mock_capture_session_start(
         "audio": Value::Null,
         "mediaPayloadTransport": "none",
         "continuousVideoThreads": "not-started",
+        "continuousVideoThreadCount": 0,
         "continuousAudioThreads": "not-started",
         "previewStatus": "mock",
         "livekitStatus": "not-published",
@@ -725,7 +736,12 @@ fn mock_capture_session_start(
     let stats = json!({
         "uptimeMs": 0,
         "framesProduced": 0,
+        "videoBytesCaptured": 0,
+        "videoCaptureThreadCount": 0,
+        "videoCaptureThreads": [],
         "audioPacketsProduced": 0,
+        "audioFramesCaptured": 0,
+        "audioBytesCaptured": 0,
         "syntheticFramesProduced": 0,
         "boundVideoChannels": 0,
         "unassignedVideoChannels": 0,
@@ -740,23 +756,50 @@ fn mock_capture_session_start(
     }
 }
 
-fn video_thread_start_target(channels: &[Value], params: &Value) -> Option<(String, u32)> {
+fn mark_channel_stats_status(channels: &mut [Value], channel_id: &str, status: &str) {
+    for channel in channels {
+        if channel.get("channelId").and_then(Value::as_str) == Some(channel_id) {
+            channel["statsStatus"] = json!(status);
+            return;
+        }
+    }
+}
+
+fn video_thread_start_targets(channels: &[Value], params: &Value) -> Vec<(String, u32)> {
     let enabled = params
         .get("startVideoThread")
         .and_then(Value::as_bool)
         .unwrap_or(true);
     if !enabled {
-        return None;
+        return Vec::new();
     }
-    channels.iter().find_map(|channel| {
-        if channel.get("source").and_then(Value::as_str) != Some("windows-native") {
-            return None;
-        }
-        let channel_id = channel.get("channelId")?.as_str()?.to_string();
-        let priority = channel.get("priority")?.as_u64()?;
-        let video_index = u32::try_from(priority.saturating_sub(1)).ok()?;
-        Some((channel_id, video_index))
-    })
+    let limit = optional_u32(params, "videoThreadLimit")
+        .ok()
+        .flatten()
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(usize::MAX);
+    channels
+        .iter()
+        .filter_map(|channel| {
+            if channel.get("source").and_then(Value::as_str) != Some("windows-native") {
+                return None;
+            }
+            let channel_id = channel.get("channelId")?.as_str()?.to_string();
+            let video_index = channel
+                .get("device")
+                .and_then(|device| device.get("index"))
+                .and_then(Value::as_u64)
+                .or_else(|| {
+                    channel
+                        .get("priority")
+                        .and_then(Value::as_u64)?
+                        .checked_sub(1)
+                })
+                .and_then(|value| u32::try_from(value).ok())?;
+            Some((channel_id, video_index))
+        })
+        .take(limit)
+        .collect()
 }
 
 fn start_video_capture_runtime(
@@ -788,19 +831,22 @@ fn start_video_capture_runtime(
     }
 }
 
-fn stop_video_capture_runtime(state: &mut WorkerState) -> Option<Value> {
-    let mut runtime = state.video_runtime.take()?;
-    runtime.stop.store(true, Ordering::SeqCst);
-    if let Some(handle) = runtime.handle.take() {
-        if handle.join().is_err() {
-            runtime.update(|stats| {
-                stats.state = "failed".to_string();
-                stats.stopped_at = Some(now_iso_like());
-                stats.last_error = Some("video capture thread panicked".to_string());
-            });
+fn stop_video_capture_runtimes(state: &mut WorkerState) -> Vec<Value> {
+    let mut snapshots = Vec::new();
+    for mut runtime in std::mem::take(&mut state.video_runtimes) {
+        runtime.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = runtime.handle.take() {
+            if handle.join().is_err() {
+                runtime.update(|stats| {
+                    stats.state = "failed".to_string();
+                    stats.stopped_at = Some(now_iso_like());
+                    stats.last_error = Some("video capture thread panicked".to_string());
+                });
+            }
         }
+        snapshots.push(runtime.snapshot());
     }
-    Some(runtime.snapshot())
+    snapshots
 }
 
 fn run_video_capture_thread(
@@ -1277,7 +1323,7 @@ impl AudioCaptureThreadStats {
 fn stats_with_runtimes(
     base_stats: &Value,
     audio_runtime: Option<&AudioCaptureRuntime>,
-    video_runtime: Option<&VideoCaptureRuntime>,
+    video_runtimes: &[VideoCaptureRuntime],
 ) -> Value {
     let mut stats = base_stats.clone();
     if let Some(runtime) = audio_runtime {
@@ -1296,17 +1342,26 @@ fn stats_with_runtimes(
             .cloned()
             .unwrap_or_else(|| json!(0));
     }
-    if let Some(runtime) = video_runtime {
-        let video_stats = runtime.snapshot();
-        stats["videoCaptureThread"] = video_stats.clone();
-        stats["framesProduced"] = video_stats
-            .get("sampleCount")
-            .cloned()
-            .unwrap_or_else(|| json!(0));
-        stats["videoBytesCaptured"] = video_stats
-            .get("totalLengthBytes")
-            .cloned()
-            .unwrap_or_else(|| json!(0));
+    if !video_runtimes.is_empty() {
+        let video_stats = video_runtimes
+            .iter()
+            .map(VideoCaptureRuntime::snapshot)
+            .collect::<Vec<_>>();
+        let frames_produced = video_stats
+            .iter()
+            .filter_map(|stats| stats.get("sampleCount").and_then(Value::as_u64))
+            .sum::<u64>();
+        let video_bytes_captured = video_stats
+            .iter()
+            .filter_map(|stats| stats.get("totalLengthBytes").and_then(Value::as_u64))
+            .sum::<u64>();
+        if let Some(first_video_stats) = video_stats.first() {
+            stats["videoCaptureThread"] = first_video_stats.clone();
+        }
+        stats["videoCaptureThreads"] = Value::Array(video_stats);
+        stats["videoCaptureThreadCount"] = json!(video_runtimes.len());
+        stats["framesProduced"] = json!(frames_produced);
+        stats["videoBytesCaptured"] = json!(video_bytes_captured);
     }
     stats
 }
@@ -1623,6 +1678,7 @@ fn with_video_device_activates<T>(
 
 fn video_device_record_to_json(record: &VideoDeviceActivate) -> Value {
     json!({
+        "index": record.index,
         "deviceId": record.device_id,
         "displayName": record.display_name,
         "transport": record.transport,
@@ -2242,6 +2298,7 @@ fn with_audio_capture_devices<T>(
 
 fn audio_device_record_to_json(record: &AudioDeviceRecord) -> Value {
     json!({
+        "index": record.index,
         "deviceId": record.device_id,
         "displayName": record.display_name,
         "transport": record.transport,
@@ -2676,6 +2733,7 @@ fn idle_capture_session() -> Value {
         "startedAt": Value::Null,
         "mediaPayloadTransport": "native-only",
         "continuousVideoThreads": "not-started",
+        "continuousVideoThreadCount": 0,
         "continuousAudioThreads": "not-started",
         "previewStatus": "not-rendered",
         "livekitStatus": "idle",
@@ -2687,7 +2745,12 @@ fn idle_stats() -> Value {
     json!({
         "uptimeMs": 0,
         "framesProduced": 0,
+        "videoBytesCaptured": 0,
+        "videoCaptureThreadCount": 0,
+        "videoCaptureThreads": [],
         "audioPacketsProduced": 0,
+        "audioFramesCaptured": 0,
+        "audioBytesCaptured": 0,
         "syntheticFramesProduced": 0,
         "boundVideoChannels": 0,
         "unassignedVideoChannels": 0,
