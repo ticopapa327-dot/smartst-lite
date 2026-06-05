@@ -148,6 +148,20 @@ export function NativeWorkerPanel() {
     }
   }
 
+  async function drainInteractionPayloadQueues() {
+    setIsSessionBusy(true);
+    setSessionError(null);
+    try {
+      setVideoPayloadConsume(await consumeNativeWorkerVideoPayloadQueue({ maxFrames: 1 }));
+      setAudioPayloadConsume(await consumeNativeWorkerAudioPayloadQueue({ maxPackets: 5 }));
+      setSession(await getNativeWorkerSessionStatus());
+    } catch (error) {
+      setSessionError(errorMessage(error));
+    } finally {
+      setIsSessionBusy(false);
+    }
+  }
+
   return (
     <section className="hmi-panel native-worker-panel">
       <div className="hmi-section-heading">
@@ -235,6 +249,10 @@ export function NativeWorkerPanel() {
         </button>
         <button className="hmi-button" disabled={isSessionBusy || !isSessionRunning} onClick={drainAudioPayloadQueue} type="button">
           Drain audio
+        </button>
+        <button className="hmi-button" disabled={isSessionBusy || !isSessionRunning} onClick={drainInteractionPayloadQueues} type="button">
+          <Activity size={15} />
+          Drain AV
         </button>
         <button className="hmi-button danger" disabled={isSessionBusy || !isSessionRunning} onClick={stopSession} type="button">
           Stop
