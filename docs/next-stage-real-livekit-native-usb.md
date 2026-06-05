@@ -472,6 +472,7 @@ get_native_worker_readiness
 probe_native_worker_devices
 start_native_worker_session
 get_native_worker_session_status
+consume_native_worker_video_payload_queue
 stop_native_worker_session
 ```
 
@@ -492,8 +493,8 @@ cargoVersion=<cargo --version>
 - 该入口只做路径、manifest、debug binary 和 Cargo 可用性诊断，不启动采集、不占用摄像头、不发布 LiveKit。
 - `probe_native_worker_devices` 会启动 Native Worker 子进程，等待 `worker.ready`，发送 `listDevices`，随后发送 `shutdown` 并清理进程；该命令只枚举 Media Foundation/WASAPI 设备，不执行 `start`，不打开连续采集线程。
 - 工作台新增 `Device Probe` 面板，用户手动点击 `Probe devices` 后才调用 `probe_native_worker_devices`，显示视频/音频枚举数量和设备来源。
-- 工作台新增手动 `Start session`、`Status`、`Stop` 控件；`Start session` 会按默认 `field-camera,endoscope` 参数启动 Native Worker `start`，并返回 `framesProduced`、`audioPacketsProduced` 等统计。该控制面仍不传输媒体 payload，也不做预览渲染、LiveKit 发布或录像。
-- start/status/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop 和 native payload queue bytes/copy 展示；该展示仍只来自 JSON 控制面状态，不承载媒体 payload。
+- 工作台新增手动 `Start session`、`Status`、`Drain payload`、`Stop` 控件；`Start session` 会按默认 `field-camera,endoscope` 参数启动 Native Worker `start`，并返回 `framesProduced`、`audioPacketsProduced` 等统计；`Drain payload` 调用 Tauri `consume_native_worker_video_payload_queue`，只 drain native queue 并刷新统计。
+- start/status/drain/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、native payload queue bytes/copy 和 payload consumed 展示；该展示仍只来自 JSON 控制面状态，不承载媒体 payload。
 - Tauri 持有的 Native Worker session 在 runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。
 
 验证：
@@ -509,7 +510,7 @@ npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 3 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；新增 payload-consume 后 `npm run test:all:poc` 完整回归耗时约 36.8 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 4 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；新增 Tauri/UI drain 控制后 `npm run test:all:poc` 完整回归耗时约 35.7 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 
@@ -593,4 +594,4 @@ npm run media-worker:usb4-validate
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
 4. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 native payload frameQueue。
 5. 进入 WASAPI 静音/讲话/外接全向麦对比样本、重采样和 AEC 边界验证。
-6. 将 Native Worker readiness 入口推进到真实 start/status/stop 控制面板，不通过 UI 直接传输媒体 payload。
+6. 将 Native Worker readiness 入口推进到真实 start/status/drain/stop 控制面板，不通过 UI 直接传输媒体 payload。

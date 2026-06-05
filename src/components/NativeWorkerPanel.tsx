@@ -1,11 +1,13 @@
 import { Activity, Cpu, Mic, RefreshCw, Video } from "lucide-react";
 import { useState } from "react";
 import {
+  consumeNativeWorkerVideoPayloadQueue,
   getNativeWorkerSessionStatus,
   probeNativeWorkerDevices,
   startNativeWorkerSession,
   stopNativeWorkerSession,
   type NativeWorkerDeviceProbe,
+  type NativeWorkerPayloadConsumeResult,
   type NativeWorkerSessionSnapshot,
 } from "../services/nativeWorkerService";
 
@@ -21,6 +23,7 @@ interface NativeWorkerDeviceSnapshot {
 export function NativeWorkerPanel() {
   const [probe, setProbe] = useState<NativeWorkerDeviceProbe | null>(null);
   const [session, setSession] = useState<NativeWorkerSessionSnapshot | null>(null);
+  const [payloadConsume, setPayloadConsume] = useState<NativeWorkerPayloadConsumeResult | null>(null);
   const [isProbing, setIsProbing] = useState(false);
   const [isSessionBusy, setIsSessionBusy] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -43,6 +46,8 @@ export function NativeWorkerPanel() {
   const payloadCopyCount = session?.stats?.videoPayloadCopyCount ?? 0;
   const payloadCopyErrorCount = session?.stats?.videoPayloadCopyErrorCount ?? 0;
   const payloadQueueBytes = session?.stats?.videoPayloadQueueBytes ?? 0;
+  const payloadConsumeCount = session?.stats?.videoPayloadConsumeCount ?? 0;
+  const payloadConsumedBytes = session?.stats?.videoPayloadConsumedBytes ?? 0;
 
   async function runProbe() {
     setIsProbing(true);
@@ -63,6 +68,7 @@ export function NativeWorkerPanel() {
   async function startSession() {
     setIsSessionBusy(true);
     setSessionError(null);
+    setPayloadConsume(null);
     try {
       setSession(
         await startNativeWorkerSession({
@@ -98,6 +104,20 @@ export function NativeWorkerPanel() {
     setSessionError(null);
     try {
       setSession(await stopNativeWorkerSession());
+      setPayloadConsume(null);
+    } catch (error) {
+      setSessionError(errorMessage(error));
+    } finally {
+      setIsSessionBusy(false);
+    }
+  }
+
+  async function drainPayloadQueue() {
+    setIsSessionBusy(true);
+    setSessionError(null);
+    try {
+      setPayloadConsume(await consumeNativeWorkerVideoPayloadQueue({ maxFrames: 2 }));
+      setSession(await getNativeWorkerSessionStatus());
     } catch (error) {
       setSessionError(errorMessage(error));
     } finally {
@@ -149,6 +169,13 @@ export function NativeWorkerPanel() {
             {payloadCopyErrorCount > 0 ? ` / ${payloadCopyErrorCount} copy errors` : ""}
           </span>
         </div>
+        <div className="recording-stat">
+          <Activity size={18} />
+          <strong>{payloadConsumeCount} consumed</strong>
+          <span>
+            {formatBytes(payloadConsumedBytes)} drained / {payloadConsume?.status ?? "not-drained"}
+          </span>
+        </div>
       </div>
 
       {probeError ? <div className="native-worker-alert">{probeError}</div> : null}
@@ -164,6 +191,9 @@ export function NativeWorkerPanel() {
         </button>
         <button className="hmi-button" disabled={isSessionBusy} onClick={refreshSession} type="button">
           Status
+        </button>
+        <button className="hmi-button" disabled={isSessionBusy || !isSessionRunning} onClick={drainPayloadQueue} type="button">
+          Drain payload
         </button>
         <button className="hmi-button danger" disabled={isSessionBusy || !isSessionRunning} onClick={stopSession} type="button">
           Stop

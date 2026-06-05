@@ -60,6 +60,25 @@ export interface NativeWorkerStartParams {
   videoFrameQueueCapacity?: number;
 }
 
+export interface NativeWorkerPayloadConsumeParams {
+  channelId?: string;
+  maxFrames?: number;
+}
+
+export interface NativeWorkerPayloadConsumeResult {
+  status?: "consumed" | "empty" | "desktop-only";
+  channelId?: string;
+  consumer?: string;
+  payloadTransport?: string;
+  exportedOverJson?: boolean;
+  maxFrames?: number;
+  consumedFrames?: number;
+  consumedBytes?: number;
+  remainingDepth?: number;
+  remainingBytes?: number;
+  latestSequence?: number | null;
+}
+
 export async function getNativeWorkerReadiness(): Promise<NativeWorkerReadiness> {
   if (!isTauriRuntime()) {
     return {
@@ -141,6 +160,28 @@ export async function stopNativeWorkerSession(): Promise<NativeWorkerSessionSnap
   }
 
   return invoke<NativeWorkerSessionSnapshot>("stop_native_worker_session");
+}
+
+export async function consumeNativeWorkerVideoPayloadQueue(
+  params?: NativeWorkerPayloadConsumeParams,
+): Promise<NativeWorkerPayloadConsumeResult> {
+  if (!isTauriRuntime()) {
+    return {
+      status: "desktop-only",
+      payloadTransport: "native-only",
+      exportedOverJson: false,
+      maxFrames: params?.maxFrames ?? 0,
+      consumedFrames: 0,
+      consumedBytes: 0,
+      remainingDepth: 0,
+      remainingBytes: 0,
+      latestSequence: null,
+    };
+  }
+
+  return invoke<NativeWorkerPayloadConsumeResult>("consume_native_worker_video_payload_queue", {
+    params: params ?? null,
+  });
 }
 
 function idleNativeWorkerSession(): NativeWorkerSessionSnapshot {
