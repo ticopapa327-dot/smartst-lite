@@ -65,6 +65,10 @@ try {
   const status = await request("status");
   assert(status.state === "running", "status reports running");
   assert(status.captureSession?.state === "running", "status reports capture session");
+  if (started.captureSession?.boundAudioEndpoints > 0) {
+    assert(status.stats?.audioCaptureThread, "status reports audio capture thread stats");
+    assert(["starting", "initializing", "running", "stopped", "failed"].includes(status.stats.audioCaptureThread.state), "audio thread state is explicit");
+  }
   assert(status.livekit.requiresNativeSdk === true, "native SDK boundary is explicit");
 
   const stopped = await request("stop");
@@ -77,6 +81,10 @@ try {
   assert(hasEvent("device", "snapshot"), "device event emitted");
   assert(hasEvent("capture", "session-started"), "capture session started event emitted");
   assert(hasEvent("capture", "session-stopped"), "capture session stopped event emitted");
+  if (started.captureSession?.boundAudioEndpoints > 0) {
+    assert(hasEvent("audio", "capture-thread-started"), "audio thread started event emitted");
+    assert(hasEvent("audio", "capture-thread-stopped"), "audio thread stopped event emitted");
+  }
   assert(hasEvent("channel", "started"), "channel started event emitted");
   assert(hasEvent("recording", "state"), "recording event emitted");
   assert(hasEvent("livekit", "state"), "livekit event emitted");

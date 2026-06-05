@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 33.0 秒。
+- 结果：通过，耗时约 32.7 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -115,18 +115,24 @@ boundAudioEndpoints=1
 video[0]=HD Webcam / 1280x720 NV12 30fps / state=native-bound
 video[1]=waiting-for-device / reason=no-native-video-device-for-channel-index
 audio[0]=麦克风阵列 (Senary Audio) / 48000Hz 2ch IEEE_FLOAT / state=native-bound
+status.audioCaptureThread.state=running
+status.audioCaptureThread.packetCount=45
+status.audioCaptureThread.capturedFrames=21600
+status.audioCaptureThread.capturedBytes=172800
+status.audioCaptureThread.discontinuityPackets=1
 stop.captureSession.state=idle
 stop.stats.realMediaSession=false
 continuousVideoThreads=not-started
-continuousAudioThreads=not-started
+continuousAudioThreads=running
 ```
 
 结论：
 
 - `start/status/stop` 已经可以表达真实 Native Worker 会话状态，不再只是固定 mock channel。
 - 当前设备数量不足时不阻塞启动，缺失通道被标记为 `waiting-for-device`，符合当前“忽略摄像头数量继续开发”的阶段决策。
+- `start` 在绑定 WASAPI 音频端点后默认启动可停止的连续音频统计线程，`status` 可读取 packet/frame/byte 计数。
 - `stop` 会清理 `captureSession` 并重置 session 统计，避免 UI/监控误判为仍在真实采集中。
-- 该能力仍不是生产采集：没有长驻线程、没有帧队列、没有预览纹理、没有 LiveKit publisher、没有录像写入。
+- 该能力仍不是生产采集：没有连续视频线程、没有帧队列、没有预览纹理、没有 AEC、没有 LiveKit publisher、没有录像写入。
 
 真实设备枚举结果：
 
@@ -279,9 +285,38 @@ decodeStatus=not-decoded
 结论：
 
 - WASAPI 可以打开当前系统第 0 路采集端点并读取真实 capture buffer。
-- 当前只验证短时 native buffer 可读性和基础时间戳/packet 统计，尚未进入连续音频线程、重采样、AEC、音量表、LiveKit 发布或录像封装。
+- `captureAudioBuffer` 只验证短时 native buffer 可读性和基础时间戳/packet 统计；连续音频线程需通过 `media-worker:native:session` 验证。
 - 首包出现 `DATA_DISCONTINUITY` 计数为 1，短时启动阶段可接受；进入连续音频管线后必须做稳定性统计，不能忽略中途 discontinuity。
 - 手术室交互通话所需回音消除不能靠本次 WASAPI buffer 读取自然获得，后续应在 WebRTC/LiveKit 音频处理链路或独立 AEC 模块中验证。
+
+WASAPI 连续音频线程验证：
+
+```powershell
+npm run media-worker:native:session
+```
+
+本机结果：
+
+```text
+测试时间：2026-06-06
+holdMs=500
+audioCaptureThread.state=running
+audioCaptureThread.device=麦克风阵列 (Senary Audio)
+audioCaptureThread.mixFormat=48000Hz / 2ch / IEEE_FLOAT / 32-bit
+audioCaptureThread.packetCount=45
+audioCaptureThread.capturedFrames=21600
+audioCaptureThread.capturedBytes=172800
+audioCaptureThread.pollCount=45
+audioCaptureThread.silentPackets=0
+audioCaptureThread.discontinuityPackets=1
+audioCaptureThread.timestampErrorPackets=0
+stop.join=ok
+```
+
+边界：
+
+- 该线程只做 WASAPI capture buffer 读取和统计，尚未做重采样、环形缓冲、AEC、音量表、发布、编码或录像。
+- `stop` 会设置停止标志并 join 线程；`shutdown` 在 worker 仍运行时也会先清理会话。
 
 ## 6. 4 路 USB 验证
 

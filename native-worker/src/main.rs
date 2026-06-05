@@ -1,7 +1,11 @@
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::ptr;
-use std::thread;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows::core::{BSTR, GUID, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
@@ -34,7 +38,6 @@ const WAVE_FORMAT_PCM_TAG: u16 = 1;
 const WAVE_FORMAT_IEEE_FLOAT_TAG: u16 = 3;
 const WAVE_FORMAT_EXTENSIBLE_TAG: u16 = 0xfffe;
 
-#[derive(Debug, Clone)]
 struct WorkerState {
     process_id: String,
     worker_version: String,
@@ -46,6 +49,7 @@ struct WorkerState {
     recording: Value,
     livekit: Value,
     stats: Value,
+    audio_runtime: Option<AudioCaptureRuntime>,
     last_error: Option<Value>,
 }
 
@@ -75,6 +79,36 @@ struct CaptureSessionStart {
     stats: Value,
 }
 
+struct AudioCaptureRuntime {
+    stop: Arc<AtomicBool>,
+    stats: Arc<Mutex<AudioCaptureThreadStats>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+struct AudioCaptureThreadStats {
+    state: String,
+    started_at: String,
+    stopped_at: Option<String>,
+    elapsed_ms: u128,
+    device_index: u32,
+    poll_interval_ms: u32,
+    packet_count: u64,
+    captured_frames: u64,
+    captured_bytes: u64,
+    silent_packets: u64,
+    discontinuity_packets: u64,
+    timestamp_error_packets: u64,
+    poll_count: u64,
+    last_device_position: Option<u64>,
+    last_qpc_position: Option<u64>,
+    buffer_frame_capacity: Option<u32>,
+    stream_latency_hns: Option<i64>,
+    device: Value,
+    mix_format: Value,
+    last_error: Option<String>,
+}
+
 impl WorkerState {
     fn new() -> Self {
         Self {
@@ -88,11 +122,13 @@ impl WorkerState {
             recording: idle_recording(),
             livekit: idle_livekit(),
             stats: idle_stats(),
+            audio_runtime: None,
             last_error: None,
         }
     }
 
     fn snapshot(&self) -> Value {
+        let stats = stats_with_audio_runtime(&self.stats, self.audio_runtime.as_ref());
         json!({
             "processId": self.process_id,
             "workerVersion": self.worker_version,
@@ -103,7 +139,7 @@ impl WorkerState {
             "channels": self.channels,
             "recording": self.recording,
             "livekit": self.livekit,
-            "stats": self.stats,
+            "stats": stats,
             "lastError": self.last_error
         })
     }
@@ -192,7 +228,12 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         "start" => Ok((start_worker(state, &params), false)),
         "stop" => Ok((stop_worker(state), false)),
         "status" => Ok((state.snapshot(), false)),
-        "shutdown" => Ok((json!({ "shuttingDown": true }), true)),
+        "shutdown" => {
+            if state.state != "idle" {
+                stop_worker(state);
+            }
+            Ok((json!({ "shuttingDown": true }), true))
+        }
         _ => Err(WorkerError::new(
             "unknown-method",
             format!("Unknown method: {method}"),
@@ -235,9 +276,25 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = session_start.stats;
+    if should_start_audio_thread(&params, &state.capture_session) {
+        let audio_index = state.capture_session["audioIndex"]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0);
+        let poll_interval_ms = optional_u32(&params, "audioPollIntervalMs")
+            .ok()
+            .flatten()
+            .unwrap_or(10)
+            .clamp(1, 100);
+        state.audio_runtime = Some(start_audio_capture_runtime(audio_index, poll_interval_ms));
+        state.capture_session["continuousAudioThreads"] = json!("running");
+    }
 
     emit_event("device", "snapshot", session_start.device_snapshot);
     emit_event("capture", "session-started", state.capture_session.clone());
+    if let Some(audio_runtime) = state.audio_runtime.as_ref() {
+        emit_event("audio", "capture-thread-started", audio_runtime.snapshot());
+    }
     for channel in &state.channels {
         emit_event("channel", "started", channel.clone());
     }
@@ -263,6 +320,7 @@ fn stop_worker(state: &mut WorkerState) -> Value {
         );
     }
 
+    let audio_thread_stopped = stop_audio_capture_runtime(state);
     let previous_session = state.capture_session.clone();
     state.state = "idle".to_string();
     state.stopped_at = Some(now_iso_like());
@@ -271,6 +329,9 @@ fn stop_worker(state: &mut WorkerState) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = idle_stats();
+    if let Some(audio_stats) = audio_thread_stopped {
+        emit_event("audio", "capture-thread-stopped", audio_stats);
+    }
     emit_event("capture", "session-stopped", previous_session);
     emit_event("worker", "stopped", state.snapshot());
     state.snapshot()
@@ -618,6 +679,311 @@ fn mock_capture_session_start(
         capture_session,
         stats,
     }
+}
+
+fn should_start_audio_thread(params: &Value, capture_session: &Value) -> bool {
+    let enabled = params
+        .get("startAudioThread")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let bound_audio = capture_session
+        .get("boundAudioEndpoints")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0;
+    enabled && bound_audio
+}
+
+fn start_audio_capture_runtime(audio_index: u32, poll_interval_ms: u32) -> AudioCaptureRuntime {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stats = Arc::new(Mutex::new(AudioCaptureThreadStats::new(
+        audio_index,
+        poll_interval_ms,
+    )));
+    let thread_stop = Arc::clone(&stop);
+    let thread_stats = Arc::clone(&stats);
+    let handle = thread::spawn(move || {
+        run_audio_capture_thread(audio_index, poll_interval_ms, thread_stop, thread_stats);
+    });
+    AudioCaptureRuntime {
+        stop,
+        stats,
+        handle: Some(handle),
+    }
+}
+
+fn stop_audio_capture_runtime(state: &mut WorkerState) -> Option<Value> {
+    let mut runtime = state.audio_runtime.take()?;
+    runtime.stop.store(true, Ordering::SeqCst);
+    if let Some(handle) = runtime.handle.take() {
+        if handle.join().is_err() {
+            runtime.update(|stats| {
+                stats.state = "failed".to_string();
+                stats.stopped_at = Some(now_iso_like());
+                stats.last_error = Some("audio capture thread panicked".to_string());
+            });
+        }
+    }
+    Some(runtime.snapshot())
+}
+
+fn run_audio_capture_thread(
+    audio_index: u32,
+    poll_interval_ms: u32,
+    stop: Arc<AtomicBool>,
+    stats: Arc<Mutex<AudioCaptureThreadStats>>,
+) {
+    let started = Instant::now();
+    update_audio_stats(&stats, |stats| {
+        stats.state = "initializing".to_string();
+    });
+    let result = (|| {
+        let _com = ComApartment::initialize()?;
+        with_audio_capture_devices(|records| {
+            let record = records
+                .iter()
+                .find(|record| record.index == audio_index)
+                .ok_or_else(|| format!("Audio index not found: {audio_index}"))?;
+            let audio_client: IAudioClient = unsafe {
+                record
+                    .device
+                    .Activate(CLSCTX_ALL, None)
+                    .map_err(format_windows_error)?
+            };
+            with_audio_mix_format(&audio_client, |format_ptr| {
+                let mix_format = wave_format_to_json(format_ptr)?;
+                let format = unsafe { *format_ptr };
+                let block_align = u64::from(format.nBlockAlign.max(1));
+                update_audio_stats(&stats, |stats| {
+                    stats.state = "starting".to_string();
+                    stats.device = audio_device_record_to_json(record);
+                    stats.mix_format = mix_format.clone();
+                });
+                unsafe {
+                    audio_client
+                        .Initialize(
+                            AUDCLNT_SHAREMODE_SHARED,
+                            0,
+                            500 * 10_000,
+                            0,
+                            format_ptr,
+                            None,
+                        )
+                        .map_err(format_windows_error)?;
+                }
+                let buffer_frame_capacity = unsafe { audio_client.GetBufferSize().ok() };
+                let stream_latency_hns = unsafe { audio_client.GetStreamLatency().ok() };
+                let capture_client: IAudioCaptureClient =
+                    unsafe { audio_client.GetService().map_err(format_windows_error)? };
+                unsafe {
+                    audio_client.Start().map_err(format_windows_error)?;
+                }
+                update_audio_stats(&stats, |stats| {
+                    stats.state = "running".to_string();
+                    stats.buffer_frame_capacity = buffer_frame_capacity;
+                    stats.stream_latency_hns = stream_latency_hns;
+                    stats.elapsed_ms = started.elapsed().as_millis();
+                });
+
+                let capture_result = (|| {
+                    while !stop.load(Ordering::SeqCst) {
+                        let mut packet_size = unsafe {
+                            capture_client
+                                .GetNextPacketSize()
+                                .map_err(format_windows_error)?
+                        };
+                        update_audio_stats(&stats, |stats| {
+                            stats.poll_count = stats.poll_count.saturating_add(1);
+                            stats.elapsed_ms = started.elapsed().as_millis();
+                        });
+                        while packet_size > 0 {
+                            let mut data_ptr: *mut u8 = ptr::null_mut();
+                            let mut frames_to_read = 0u32;
+                            let mut flags = 0u32;
+                            let mut device_position = 0u64;
+                            let mut qpc_position = 0u64;
+                            unsafe {
+                                capture_client
+                                    .GetBuffer(
+                                        &mut data_ptr,
+                                        &mut frames_to_read,
+                                        &mut flags,
+                                        Some(&mut device_position),
+                                        Some(&mut qpc_position),
+                                    )
+                                    .map_err(format_windows_error)?;
+                            }
+                            update_audio_stats(&stats, |stats| {
+                                let frame_count = u64::from(frames_to_read);
+                                stats.packet_count = stats.packet_count.saturating_add(1);
+                                stats.captured_frames =
+                                    stats.captured_frames.saturating_add(frame_count);
+                                stats.captured_bytes = stats
+                                    .captured_bytes
+                                    .saturating_add(frame_count.saturating_mul(block_align));
+                                if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_SILENT.0) {
+                                    stats.silent_packets = stats.silent_packets.saturating_add(1);
+                                }
+                                if has_audio_buffer_flag(
+                                    flags,
+                                    AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0,
+                                ) {
+                                    stats.discontinuity_packets =
+                                        stats.discontinuity_packets.saturating_add(1);
+                                }
+                                if has_audio_buffer_flag(
+                                    flags,
+                                    AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0,
+                                ) {
+                                    stats.timestamp_error_packets =
+                                        stats.timestamp_error_packets.saturating_add(1);
+                                }
+                                stats.last_device_position = Some(device_position);
+                                stats.last_qpc_position = Some(qpc_position);
+                                stats.elapsed_ms = started.elapsed().as_millis();
+                            });
+                            unsafe {
+                                capture_client
+                                    .ReleaseBuffer(frames_to_read)
+                                    .map_err(format_windows_error)?;
+                            }
+                            packet_size = unsafe {
+                                capture_client
+                                    .GetNextPacketSize()
+                                    .map_err(format_windows_error)?
+                            };
+                        }
+                        thread::sleep(Duration::from_millis(u64::from(poll_interval_ms)));
+                    }
+                    Ok::<(), String>(())
+                })();
+                let stop_result = unsafe { audio_client.Stop().map_err(format_windows_error) };
+                match (capture_result, stop_result) {
+                    (Ok(()), Ok(())) => Ok(()),
+                    (Err(error), _) => Err(error),
+                    (Ok(()), Err(error)) => Err(error),
+                }
+            })
+        })
+    })();
+
+    match result {
+        Ok(()) => {
+            update_audio_stats(&stats, |stats| {
+                stats.state = "stopped".to_string();
+                stats.stopped_at = Some(now_iso_like());
+                stats.elapsed_ms = started.elapsed().as_millis();
+            });
+        }
+        Err(error) => {
+            update_audio_stats(&stats, |stats| {
+                stats.state = "failed".to_string();
+                stats.stopped_at = Some(now_iso_like());
+                stats.elapsed_ms = started.elapsed().as_millis();
+                stats.last_error = Some(error);
+            });
+        }
+    }
+}
+
+fn update_audio_stats(
+    stats: &Arc<Mutex<AudioCaptureThreadStats>>,
+    update: impl FnOnce(&mut AudioCaptureThreadStats),
+) {
+    if let Ok(mut stats) = stats.lock() {
+        update(&mut stats);
+    }
+}
+
+impl AudioCaptureRuntime {
+    fn snapshot(&self) -> Value {
+        self.stats
+            .lock()
+            .map(|stats| audio_capture_thread_stats_to_json(&stats))
+            .unwrap_or_else(|_| {
+                json!({
+                    "state": "failed",
+                    "lastError": "audio capture stats lock poisoned"
+                })
+            })
+    }
+
+    fn update(&self, update: impl FnOnce(&mut AudioCaptureThreadStats)) {
+        update_audio_stats(&self.stats, update);
+    }
+}
+
+impl AudioCaptureThreadStats {
+    fn new(device_index: u32, poll_interval_ms: u32) -> Self {
+        Self {
+            state: "starting".to_string(),
+            started_at: now_iso_like(),
+            stopped_at: None,
+            elapsed_ms: 0,
+            device_index,
+            poll_interval_ms,
+            packet_count: 0,
+            captured_frames: 0,
+            captured_bytes: 0,
+            silent_packets: 0,
+            discontinuity_packets: 0,
+            timestamp_error_packets: 0,
+            poll_count: 0,
+            last_device_position: None,
+            last_qpc_position: None,
+            buffer_frame_capacity: None,
+            stream_latency_hns: None,
+            device: Value::Null,
+            mix_format: Value::Null,
+            last_error: None,
+        }
+    }
+}
+
+fn stats_with_audio_runtime(base_stats: &Value, runtime: Option<&AudioCaptureRuntime>) -> Value {
+    let mut stats = base_stats.clone();
+    if let Some(runtime) = runtime {
+        let audio_stats = runtime.snapshot();
+        stats["audioCaptureThread"] = audio_stats.clone();
+        stats["audioPacketsProduced"] = audio_stats
+            .get("packetCount")
+            .cloned()
+            .unwrap_or_else(|| json!(0));
+        stats["audioFramesCaptured"] = audio_stats
+            .get("capturedFrames")
+            .cloned()
+            .unwrap_or_else(|| json!(0));
+        stats["audioBytesCaptured"] = audio_stats
+            .get("capturedBytes")
+            .cloned()
+            .unwrap_or_else(|| json!(0));
+    }
+    stats
+}
+
+fn audio_capture_thread_stats_to_json(stats: &AudioCaptureThreadStats) -> Value {
+    json!({
+        "state": stats.state,
+        "startedAt": stats.started_at,
+        "stoppedAt": stats.stopped_at,
+        "elapsedMs": stats.elapsed_ms,
+        "deviceIndex": stats.device_index,
+        "pollIntervalMs": stats.poll_interval_ms,
+        "packetCount": stats.packet_count,
+        "capturedFrames": stats.captured_frames,
+        "capturedBytes": stats.captured_bytes,
+        "silentPackets": stats.silent_packets,
+        "discontinuityPackets": stats.discontinuity_packets,
+        "timestampErrorPackets": stats.timestamp_error_packets,
+        "pollCount": stats.poll_count,
+        "lastDevicePosition": stats.last_device_position,
+        "lastQpcPosition": stats.last_qpc_position,
+        "bufferFrameCapacity": stats.buffer_frame_capacity,
+        "streamLatencyHns": stats.stream_latency_hns,
+        "device": stats.device,
+        "mixFormat": stats.mix_format,
+        "lastError": stats.last_error
+    })
 }
 
 fn mock_devices() -> Value {
