@@ -274,6 +274,20 @@ struct VideoPayloadQueueConsume {
     remaining_bytes: u64,
 }
 
+struct VideoPayloadQueueDrain {
+    frames: Vec<VideoPayloadFrame>,
+    consumed_bytes: u64,
+    remaining_depth: u32,
+    remaining_bytes: u64,
+}
+
+struct VideoPgmFormat {
+    width: u32,
+    height: u32,
+    subtype_fourcc: String,
+    source_format: Value,
+}
+
 struct AudioLevelPacketMeasurement {
     status: &'static str,
     format: &'static str,
@@ -318,22 +332,36 @@ impl VideoPayloadQueue {
         }
     }
 
-    fn consume(&mut self, max_frames: u32) -> VideoPayloadQueueConsume {
+    fn drain(&mut self, max_frames: u32) -> VideoPayloadQueueDrain {
         let max_frames = max_frames.max(1);
-        let mut consumed_frames = 0u32;
+        let mut frames = Vec::new();
         let mut consumed_bytes = 0u64;
+
+        while (frames.len() as u32) < max_frames {
+            let Some(frame) = self.frames.pop_front() else {
+                break;
+            };
+            consumed_bytes = consumed_bytes.saturating_add(frame.payload.len() as u64);
+            self.bytes = self.bytes.saturating_sub(frame.payload.len() as u64);
+            frames.push(frame);
+        }
+
+        VideoPayloadQueueDrain {
+            frames,
+            consumed_bytes,
+            remaining_depth: self.frames.len() as u32,
+            remaining_bytes: self.bytes,
+        }
+    }
+
+    fn consume(&mut self, max_frames: u32) -> VideoPayloadQueueConsume {
+        let drain = self.drain(max_frames);
         let mut latest_sequence = None;
         let mut latest_timestamp_hns = None;
         let mut latest_sample_time_hns = None;
         let mut latest_total_length_bytes = None;
 
-        while consumed_frames < max_frames {
-            let Some(frame) = self.frames.pop_front() else {
-                break;
-            };
-            consumed_frames = consumed_frames.saturating_add(1);
-            consumed_bytes = consumed_bytes.saturating_add(frame.payload.len() as u64);
-            self.bytes = self.bytes.saturating_sub(frame.payload.len() as u64);
+        for frame in &drain.frames {
             latest_sequence = Some(frame.sequence);
             latest_timestamp_hns = Some(frame.timestamp_hns);
             latest_sample_time_hns = frame.sample_time_hns;
@@ -341,14 +369,14 @@ impl VideoPayloadQueue {
         }
 
         VideoPayloadQueueConsume {
-            consumed_frames,
-            consumed_bytes,
+            consumed_frames: drain.frames.len() as u32,
+            consumed_bytes: drain.consumed_bytes,
             latest_sequence,
             latest_timestamp_hns,
             latest_sample_time_hns,
             latest_total_length_bytes,
-            remaining_depth: self.frames.len() as u32,
-            remaining_bytes: self.bytes,
+            remaining_depth: drain.remaining_depth,
+            remaining_bytes: drain.remaining_bytes,
         }
     }
 }
@@ -568,6 +596,9 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         "stop" => Ok((stop_worker(state), false)),
         "consumeVideoPayloadQueue" => Ok((consume_video_payload_queue(state, &params)?, false)),
         "consumeAudioPayloadQueue" => Ok((consume_audio_payload_queue(state, &params)?, false)),
+        "exportVideoPayloadQueuePgm" => {
+            Ok((export_video_payload_queue_pgm(state, &params)?, false))
+        }
         "exportAudioPayloadQueueWav" => {
             Ok((export_audio_payload_queue_wav(state, &params)?, false))
         }
@@ -747,6 +778,47 @@ fn consume_video_payload_queue(
         .consume_payload_queue(max_frames)
         .map_err(|message| WorkerError::new("native-media-error", message))?;
     emit_event("video", "payload-queue-consumed", result.clone());
+    Ok(result)
+}
+
+fn export_video_payload_queue_pgm(
+    state: &mut WorkerState,
+    params: &Value,
+) -> Result<Value, WorkerError> {
+    let max_frames = optional_u32(params, "maxFrames")
+        .map_err(|message| WorkerError::new("invalid-params", message))?
+        .unwrap_or(1)
+        .clamp(1, 10);
+    let overwrite = params
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(WorkerError::new(
+            "invalid-params",
+            "exportVideoPayloadQueuePgm requires a path".to_string(),
+        ));
+    };
+    let requested_channel_id = params.get("channelId").and_then(Value::as_str);
+    let runtime = if let Some(channel_id) = requested_channel_id {
+        state
+            .video_runtimes
+            .iter()
+            .find(|runtime| runtime.channel_id == channel_id)
+    } else {
+        state.video_runtimes.first()
+    };
+    let Some(runtime) = runtime else {
+        return Err(WorkerError::new(
+            "native-media-error",
+            "No running video payload queue is available".to_string(),
+        ));
+    };
+
+    let result = runtime
+        .export_payload_queue_pgm(PathBuf::from(path), max_frames, overwrite)
+        .map_err(|message| WorkerError::new("native-media-error", message))?;
+    emit_event("video", "payload-queue-pgm-exported", result.clone());
     Ok(result)
 }
 
@@ -1610,6 +1682,95 @@ impl VideoCaptureRuntime {
             "remainingBytes": consume.remaining_bytes
         }))
     }
+
+    fn export_payload_queue_pgm(
+        &self,
+        path: PathBuf,
+        max_frames: u32,
+        overwrite: bool,
+    ) -> Result<Value, String> {
+        let media_type = self
+            .stats
+            .lock()
+            .map_err(|_| "video capture stats lock poisoned".to_string())?
+            .media_type
+            .clone();
+        let pgm_format = video_pgm_format_from_media_type(&media_type)?;
+        let drain = self
+            .payload_queue
+            .lock()
+            .map_err(|_| "video payload queue lock poisoned".to_string())?
+            .drain(max_frames);
+        let consumed_frames = drain.frames.len() as u32;
+        let latest_frame = drain.frames.last();
+        let latest_sequence = latest_frame.map(|frame| frame.sequence);
+        let latest_timestamp_hns = latest_frame.map(|frame| frame.timestamp_hns);
+        let latest_sample_time_hns = latest_frame.and_then(|frame| frame.sample_time_hns);
+        let latest_total_length_bytes = latest_frame.and_then(|frame| frame.total_length_bytes);
+        if consumed_frames == 0 {
+            return Ok(json!({
+                "status": "empty",
+                "channelId": self.channel_id.clone(),
+                "consumer": "pgm-export",
+                "payloadTransport": "native-only",
+                "exportedOverJson": false,
+                "maxFrames": max_frames,
+                "consumedFrames": 0,
+                "consumedBytes": 0,
+                "remainingDepth": drain.remaining_depth,
+                "remainingBytes": drain.remaining_bytes,
+                "path": path.to_string_lossy().to_string()
+            }));
+        }
+
+        let Some(frame) = latest_frame else {
+            return Err("video payload queue export has no latest frame".to_string());
+        };
+        let pgm_bytes = build_pgm_bytes(&pgm_format, &frame.payload)?;
+        write_binary_file(&path, &pgm_bytes, overwrite, "video PGM")?;
+        let file_bytes = u64::try_from(pgm_bytes.len()).unwrap_or(u64::MAX);
+
+        self.update(|stats| {
+            stats.frame_payload_queue_depth = drain.remaining_depth;
+            stats.frame_queue_depth = drain.remaining_depth;
+            stats.frame_payload_queue_bytes = drain.remaining_bytes;
+            stats.frame_payload_consume_count = stats
+                .frame_payload_consume_count
+                .saturating_add(u64::from(consumed_frames));
+            stats.frame_payload_consumed_bytes = stats
+                .frame_payload_consumed_bytes
+                .saturating_add(drain.consumed_bytes);
+            stats.frame_payload_latest_consumed_sequence = latest_sequence;
+            stats.frame_payload_consumer_status = "pgm-export".to_string();
+        });
+
+        Ok(json!({
+            "status": "exported",
+            "channelId": self.channel_id.clone(),
+            "consumer": "pgm-export",
+            "payloadTransport": "native-only",
+            "exportedOverJson": false,
+            "fileFormat": "pgm",
+            "path": path.to_string_lossy().to_string(),
+            "maxFrames": max_frames,
+            "consumedFrames": consumed_frames,
+            "consumedBytes": drain.consumed_bytes,
+            "fileBytes": file_bytes,
+            "latestSequence": latest_sequence,
+            "latestTimestampHns": latest_timestamp_hns,
+            "latestSampleTimeHns": latest_sample_time_hns,
+            "latestTotalLengthBytes": latest_total_length_bytes,
+            "remainingDepth": drain.remaining_depth,
+            "remainingBytes": drain.remaining_bytes,
+            "imageFormat": {
+                "format": "PGM",
+                "sourceSubtype": pgm_format.subtype_fourcc,
+                "width": pgm_format.width,
+                "height": pgm_format.height,
+                "sourceMediaType": pgm_format.source_format
+            }
+        }))
+    }
 }
 
 impl VideoCaptureThreadStats {
@@ -2060,6 +2221,102 @@ fn build_wav_bytes(format: &AudioWavFormat, audio_data: &[u8]) -> Result<Vec<u8>
     bytes.extend_from_slice(&data_size.to_le_bytes());
     bytes.extend_from_slice(audio_data);
     Ok(bytes)
+}
+
+fn video_pgm_format_from_media_type(media_type: &Value) -> Result<VideoPgmFormat, String> {
+    if media_type.is_null() {
+        return Err("video media type is not available yet".to_string());
+    }
+    let subtype_fourcc = media_type
+        .get("subtypeFourCc")
+        .or_else(|| media_type.get("subtype"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    if subtype_fourcc != "NV12" {
+        return Err(format!(
+            "unsupported video PGM export subtype: {subtype_fourcc}; only NV12 is supported"
+        ));
+    }
+    let width = media_type
+        .get("width")
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "video media type width is missing or invalid".to_string())?;
+    let height = media_type
+        .get("height")
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "video media type height is missing or invalid".to_string())?;
+
+    Ok(VideoPgmFormat {
+        width,
+        height,
+        subtype_fourcc,
+        source_format: media_type.clone(),
+    })
+}
+
+fn build_pgm_bytes(format: &VideoPgmFormat, payload: &[u8]) -> Result<Vec<u8>, String> {
+    let luma_bytes = u64::from(format.width)
+        .checked_mul(u64::from(format.height))
+        .ok_or_else(|| "video PGM luma size overflow".to_string())?;
+    let luma_bytes =
+        usize::try_from(luma_bytes).map_err(|_| "video PGM luma size is too large".to_string())?;
+    if payload.len() < luma_bytes {
+        return Err(format!(
+            "video payload is too small for NV12 luma plane: payload={}, required={luma_bytes}",
+            payload.len()
+        ));
+    }
+    let header = format!("P5\n{} {}\n255\n", format.width, format.height);
+    let mut bytes = Vec::with_capacity(header.len().saturating_add(luma_bytes));
+    bytes.extend_from_slice(header.as_bytes());
+    bytes.extend_from_slice(&payload[..luma_bytes]);
+    Ok(bytes)
+}
+
+fn write_binary_file(
+    path: &PathBuf,
+    bytes: &[u8],
+    overwrite: bool,
+    label: &str,
+) -> Result<(), String> {
+    if path.exists() && !overwrite {
+        return Err(format!(
+            "{label} output already exists: {}",
+            path.to_string_lossy()
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create {label} output directory {}: {error}",
+                    parent.to_string_lossy()
+                )
+            })?;
+        }
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|error| {
+            format!(
+                "failed to open {label} output {}: {error}",
+                path.to_string_lossy()
+            )
+        })?;
+    file.write_all(bytes).map_err(|error| {
+        format!(
+            "failed to write {label} output {}: {error}",
+            path.to_string_lossy()
+        )
+    })
 }
 
 fn write_wav_file(path: &PathBuf, bytes: &[u8], overwrite: bool) -> Result<(), String> {

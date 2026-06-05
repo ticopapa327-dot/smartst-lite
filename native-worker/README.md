@@ -5,7 +5,7 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 ## Current Scope
 
 - JSON Lines control plane over stdin/stdout.
-- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `consumeAudioPayloadQueue`, `exportAudioPayloadQueueWav`, `status`, `shutdown`.
+- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `exportVideoPayloadQueuePgm`, `consumeAudioPayloadQueue`, `exportAudioPayloadQueueWav`, `status`, `shutdown`.
 - `listDevices` uses Windows native enumeration when available:
   - Video: Media Foundation device source enumeration.
   - Audio capture: WASAPI/Core Audio endpoint enumeration.
@@ -134,6 +134,21 @@ $env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
 npm run media-worker:native:payload-consume
 ```
 
+## Export Native Video Payload Queue To PGM
+
+```powershell
+npm run media-worker:native:video-pgm-export
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
+$env:SMARTST_NATIVE_VIDEO_PGM_EXPORT_MAX_FRAMES="1"
+$env:SMARTST_NATIVE_VIDEO_PGM_EXPORT_PATH="native-worker/.tmp/video-payload-export.pgm"
+npm run media-worker:native:video-pgm-export
+```
+
 ## Consume Native Audio Payload Queue
 
 ```powershell
@@ -217,6 +232,8 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 `start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, pass `videoFrameQueueCapacity` / `SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the native-only bounded frame payload queue, or pass `audioPayloadQueueCapacity` / `SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY` to size the native-only bounded audio packet payload queue.
 
 Each video thread reports `frameQueue` statistics with `mode=native-payload-bounded` and `payloadTransport=native-only`. The worker copies each Media Foundation sample into a bounded native memory queue and reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export frame payloads through JSON Lines. `consumeVideoPayloadQueue` drains queued native payload frames and returns only metadata and byte counters, so it can validate the future preview/publisher/recorder consumer boundary without returning frame bytes. Until a real consumer is attached, new payload frames overwrite the bounded queue after capacity is reached and increment `dropCount`.
+
+`exportVideoPayloadQueuePgm` drains queued NV12 frames and writes a native-side PGM grayscale image from the Y plane. It supports only NV12 today and returns only file metadata and luma statistics. It is a frame payload/file-consumer validation path, not preview rendering, color conversion, LiveKit publishing, encoding, or recording.
 
 The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines. `consumeAudioPayloadQueue` drains queued native PCM packets and returns only metadata and byte counters, so it can validate the future resampler/AEC/publisher/recorder consumer boundary without returning PCM bytes. `exportAudioPayloadQueueWav` drains queued PCM packets and writes a native-side WAV file for PCM/IEEE_FLOAT mix formats; the JSON response returns only file metadata and byte counters. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or implement final recording policy. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
 
