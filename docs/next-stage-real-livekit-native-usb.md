@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 33.1 秒。
+- 结果：通过，耗时约 31.6 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -123,7 +123,7 @@ audio capture:
 4. 麦克风 (罗技高清网络摄像机 C930c)
 ```
 
-注意：当前只完成设备枚举，`capabilitiesStatus=not-enumerated`，尚未读取分辨率/帧率/音频格式能力，也未打开真实采集流。
+注意：`listDevices` 本身只做设备枚举，`capabilitiesStatus=not-enumerated`。视频能力、单帧样本、连续帧统计和音频格式/短时 buffer 需要通过后续 probe 命令单独验证。
 
 视频能力探测和单帧采集结果：
 
@@ -153,6 +153,49 @@ decodeStatus=not-decoded
 - 当前样本仍停留在 native buffer 验证层，未进入连续帧循环、预览渲染、LiveKit 发布、编码或录像。
 - 该结果证明 Native Worker 采集技术路线可继续推进，但不能替代目标采集卡 30 分钟/2 小时现场稳定性验收。
 
+## 4. Media Foundation 连续帧循环和帧率统计
+
+Media Foundation 连续帧循环和帧率统计结果：
+
+```powershell
+npm run media-worker:native:video-loop
+```
+
+Native Worker 新增命令：
+
+- `measureVideoFrames`：按指定 Media Foundation 原生媒体类型连续读取 SourceReader 样本，只返回统计，不通过 JSON Lines 传输帧数据。
+
+本机结果：
+
+```text
+targetVideoIndex=0
+mediaTypeIndex=0
+device=HD Webcam
+mediaType=1280x720 NV12 30fps
+durationMs=2000
+elapsedMs=2028
+status=frames-measured
+readCount=20
+sampleCount=19
+emptyReadCount=1
+measuredFps=9.37
+mediaTimelineFps=10.32
+frameRateFromSampleDuration=30.00
+totalLengthBytes=26265600
+totalBufferCount=19
+averageSampleDurationHns=333333
+streamFlagNames=stream-tick
+decodeStatus=not-decoded
+transportStatus=not-published
+```
+
+结论：
+
+- SourceReader 可以在本机第 0 路视频设备上连续返回 native sample，连续帧循环链路成立。
+- 当前 HD Webcam 实测帧率约 9.37fps，低于媒体类型声明的 30fps；按当前决策，该结果只记录为开发机摄像头限制，不作为采集卡路线阻塞。
+- 本次仍未做解码、预览渲染、LiveKit 发布、编码或录像；真实帧 payload 仍留在 native 侧，JSON Lines 只返回统计。
+- `stream-tick` 在本机连续读取中出现，后续长时间采集统计需要保留该 flag 计数，不能只看 sample 数。
+
 WASAPI 阶段复测时的当前设备状态：
 
 ```text
@@ -167,7 +210,7 @@ audio[0]=麦克风阵列 (Senary Audio)
 
 说明：该结果只反映 WASAPI 阶段复测时 Windows 当前活跃设备状态，和前一次 4 路摄像头接入测试不是同一次硬件状态。后续进入 4 路采集卡验收前，必须重新确认设备接入和枚举数量。
 
-## 4. WASAPI 音频格式探测和短时采集
+## 5. WASAPI 音频格式探测和短时采集
 
 新增入口：
 
@@ -207,7 +250,7 @@ decodeStatus=not-decoded
 - 首包出现 `DATA_DISCONTINUITY` 计数为 1，短时启动阶段可接受；进入连续音频管线后必须做稳定性统计，不能忽略中途 discontinuity。
 - 手术室交互通话所需回音消除不能靠本次 WASAPI buffer 读取自然获得，后续应在 WebRTC/LiveKit 音频处理链路或独立 AEC 模块中验证。
 
-## 5. 4 路 USB 验证
+## 6. 4 路 USB 验证
 
 新增入口：
 
@@ -269,7 +312,7 @@ $env:SMARTST_USB4_DURATION_SECONDS="7200"
 npm run media-worker:usb4-validate
 ```
 
-## 6. 本阶段停止条件
+## 7. 本阶段停止条件
 
 必须停止并先处理问题的情况：
 
@@ -280,12 +323,12 @@ npm run media-worker:usb4-validate
 - `npm run media-worker:usb4-validate` 在 4 路硬件接入后仍返回 `blocked` 或 `failed`。
 - 4 路 30 分钟验证中任一路黑屏、无帧、错路或设备掉线。
 
-## 7. 下一步
+## 8. 下一步
 
 建议顺序：
 
 1. 准备真实 LiveKit server 和服务端 API key/secret。
 2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
 3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 进入 Media Foundation 连续帧循环和帧率统计，不做 WebView IPC 传帧。
-5. 进入 WASAPI 连续音频采集线程、重采样/AEC 边界验证和音频统计上报。
+4. 进入 WASAPI 连续音频采集线程、重采样/AEC 边界验证和音频统计上报。
+5. 将 Native Worker 的 `start/stop/status` 从 mock 状态机推进到真实采集会话状态机。

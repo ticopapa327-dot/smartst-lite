@@ -19,9 +19,10 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoFormat_YUY2, MFVideoFormat_YV12, MFSTARTUP_FULL, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED,
-    MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_ERROR,
-    MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
+    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READERF_ALLEFFECTSREMOVED,
+    MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
+    MF_SOURCE_READERF_ERROR, MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED, MF_SOURCE_READERF_NEWSTREAM,
+    MF_SOURCE_READERF_STREAMTICK, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -165,6 +166,11 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         )),
         "captureVideoSample" => Ok((
             capture_video_sample(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
+        "measureVideoFrames" => Ok((
+            measure_video_frames(&params)
                 .map_err(|message| WorkerError::new("native-media-error", message))?,
             false,
         )),
@@ -551,6 +557,24 @@ fn capture_video_sample(params: &Value) -> Result<Value, String> {
     })
 }
 
+fn measure_video_frames(params: &Value) -> Result<Value, String> {
+    let media_type_index = optional_u32(params, "mediaTypeIndex")?.unwrap_or(0);
+    let duration_ms = optional_u32(params, "durationMs")?
+        .unwrap_or(2_000)
+        .clamp(250, 120_000);
+    let max_reads = optional_u32(params, "maxReads")?
+        .unwrap_or(10_000)
+        .clamp(1, 1_000_000);
+    with_video_device_activates(|records| {
+        let selected = select_video_records(&records, params)?;
+        let record = selected
+            .first()
+            .copied()
+            .ok_or_else(|| "No video device selected".to_string())?;
+        measure_video_frames_for_record(record, media_type_index, duration_ms, max_reads)
+    })
+}
+
 fn probe_video_record_capabilities(
     record: &VideoDeviceActivate,
     max_media_types: u32,
@@ -685,6 +709,180 @@ fn capture_video_sample_for_record(
         Err(format!(
             "No video sample returned after {max_attempts} attempts. lastFlags={last_flags}"
         ))
+    })();
+    shutdown_media_source(&source, &record.activate);
+    result
+}
+
+fn measure_video_frames_for_record(
+    record: &VideoDeviceActivate,
+    media_type_index: u32,
+    duration_ms: u32,
+    max_reads: u32,
+) -> Result<Value, String> {
+    let source: IMFMediaSource = unsafe {
+        record
+            .activate
+            .ActivateObject()
+            .map_err(format_windows_error)?
+    };
+    let result = (|| {
+        let reader = unsafe {
+            MFCreateSourceReaderFromMediaSource(&source, None::<&IMFAttributes>)
+                .map_err(format_windows_error)?
+        };
+        let media_type = unsafe {
+            reader
+                .GetNativeMediaType(video_stream_index(), media_type_index)
+                .map_err(format_windows_error)?
+        };
+        unsafe {
+            reader
+                .SetCurrentMediaType(video_stream_index(), None, &media_type)
+                .map_err(format_windows_error)?;
+        }
+
+        let media_type_json = media_type_to_json(&media_type, media_type_index);
+        let started_at = Instant::now();
+        let duration = Duration::from_millis(u64::from(duration_ms));
+        let mut read_count = 0u32;
+        let mut sample_count = 0u64;
+        let mut empty_read_count = 0u64;
+        let mut total_length_bytes = 0u64;
+        let mut total_buffer_count = 0u64;
+        let mut media_type_changed_count = 0u64;
+        let mut native_media_type_changed_count = 0u64;
+        let mut stream_flag_or = 0u32;
+        let mut first_timestamp_hns = None;
+        let mut last_timestamp_hns = None;
+        let mut first_sample_time_hns = None;
+        let mut last_sample_time_hns = None;
+        let mut sample_duration_sum_hns = 0i128;
+        let mut sample_duration_count = 0u64;
+
+        while started_at.elapsed() < duration && read_count < max_reads {
+            read_count = read_count.saturating_add(1);
+            let mut actual_stream_index = 0u32;
+            let mut stream_flags = 0u32;
+            let mut timestamp_hns = 0i64;
+            let mut sample = None;
+            unsafe {
+                reader
+                    .ReadSample(
+                        video_stream_index(),
+                        0,
+                        Some(&mut actual_stream_index),
+                        Some(&mut stream_flags),
+                        Some(&mut timestamp_hns),
+                        Some(&mut sample),
+                    )
+                    .map_err(format_windows_error)?;
+            }
+            stream_flag_or |= stream_flags;
+
+            if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_ERROR.0) {
+                return Err(format!(
+                    "SourceReader reported error flag while measuring frames. flags={stream_flags}"
+                ));
+            }
+            if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_ENDOFSTREAM.0) {
+                return Err(format!(
+                    "SourceReader reached end of stream while measuring frames. reads={read_count}"
+                ));
+            }
+            if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0) {
+                media_type_changed_count = media_type_changed_count.saturating_add(1);
+            }
+            if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED.0) {
+                native_media_type_changed_count = native_media_type_changed_count.saturating_add(1);
+            }
+
+            if let Some(sample) = sample {
+                sample_count = sample_count.saturating_add(1);
+                first_timestamp_hns.get_or_insert(timestamp_hns);
+                last_timestamp_hns = Some(timestamp_hns);
+                if let Ok(total_length) = unsafe { sample.GetTotalLength() } {
+                    total_length_bytes = total_length_bytes.saturating_add(u64::from(total_length));
+                }
+                if let Ok(buffer_count) = unsafe { sample.GetBufferCount() } {
+                    total_buffer_count = total_buffer_count.saturating_add(u64::from(buffer_count));
+                }
+                if let Ok(sample_time_hns) = unsafe { sample.GetSampleTime() } {
+                    first_sample_time_hns.get_or_insert(sample_time_hns);
+                    last_sample_time_hns = Some(sample_time_hns);
+                }
+                if let Ok(sample_duration_hns) = unsafe { sample.GetSampleDuration() } {
+                    sample_duration_sum_hns += i128::from(sample_duration_hns);
+                    sample_duration_count = sample_duration_count.saturating_add(1);
+                }
+            } else {
+                empty_read_count = empty_read_count.saturating_add(1);
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        let elapsed_ms = started_at.elapsed().as_millis();
+        let elapsed_ms_f64 = elapsed_ms as f64;
+        let measured_fps = if elapsed_ms > 0 {
+            Some(sample_count as f64 * 1000.0 / elapsed_ms_f64)
+        } else {
+            None
+        };
+        let measured_bytes_per_second = if elapsed_ms > 0 {
+            Some(total_length_bytes as f64 * 1000.0 / elapsed_ms_f64)
+        } else {
+            None
+        };
+        let average_sample_duration_hns = if sample_duration_count > 0 {
+            Some((sample_duration_sum_hns / i128::from(sample_duration_count)) as i64)
+        } else {
+            None
+        };
+        let frame_rate_from_duration = average_sample_duration_hns
+            .filter(|duration| *duration > 0)
+            .map(|duration| 10_000_000.0 / duration as f64);
+        let media_time_span_hns = first_sample_time_hns
+            .zip(last_sample_time_hns)
+            .and_then(|(first, last)| last.checked_sub(first));
+        let media_timeline_fps = media_time_span_hns
+            .filter(|span| *span > 0 && sample_count > 1)
+            .map(|span| (sample_count - 1) as f64 * 10_000_000.0 / span as f64);
+        let status = if sample_count > 0 {
+            "frames-measured"
+        } else {
+            "no-samples"
+        };
+
+        Ok(json!({
+            "status": status,
+            "backend": "media-foundation",
+            "device": video_device_record_to_json(record),
+            "mediaType": media_type_json,
+            "durationMs": duration_ms,
+            "elapsedMs": elapsed_ms,
+            "maxReads": max_reads,
+            "readCount": read_count,
+            "sampleCount": sample_count,
+            "emptyReadCount": empty_read_count,
+            "measuredFps": measured_fps,
+            "mediaTimelineFps": media_timeline_fps,
+            "measuredBytesPerSecond": measured_bytes_per_second,
+            "totalLengthBytes": total_length_bytes,
+            "totalBufferCount": total_buffer_count,
+            "averageSampleDurationHns": average_sample_duration_hns,
+            "frameRateFromSampleDuration": frame_rate_from_duration,
+            "firstTimestampHns": first_timestamp_hns,
+            "lastTimestampHns": last_timestamp_hns,
+            "firstSampleTimeHns": first_sample_time_hns,
+            "lastSampleTimeHns": last_sample_time_hns,
+            "mediaTimeSpanHns": media_time_span_hns,
+            "streamFlagsOr": stream_flag_or,
+            "streamFlagNames": source_reader_flag_names(stream_flag_or),
+            "mediaTypeChangedCount": media_type_changed_count,
+            "nativeMediaTypeChangedCount": native_media_type_changed_count,
+            "decodeStatus": "not-decoded",
+            "transportStatus": "not-published"
+        }))
     })();
     shutdown_media_source(&source, &record.activate);
     result
@@ -830,6 +1028,15 @@ fn source_reader_flag_names(flags: u32) -> Vec<&'static str> {
     }
     if has_source_reader_flag(flags, MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED.0) {
         names.push("native-media-type-changed");
+    }
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_NEWSTREAM.0) {
+        names.push("new-stream");
+    }
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_STREAMTICK.0) {
+        names.push("stream-tick");
+    }
+    if has_source_reader_flag(flags, MF_SOURCE_READERF_ALLEFFECTSREMOVED.0) {
+        names.push("all-effects-removed");
     }
     names
 }
