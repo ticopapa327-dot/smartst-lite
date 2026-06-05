@@ -289,7 +289,8 @@
   - 执行 `$env:SMARTST_NATIVE_SESSION_STRESS_ITERATIONS=5; $env:SMARTST_NATIVE_SESSION_HOLD_MS=5000; npm run media-worker:native:session-stress`：通过，连续 5 轮 start/status/stop，每轮 hold 5000ms；当前 1 路硬件下每轮 `videoSamples=48`、`videoFrameQueuePushCount=48`、`videoFrameQueueDropCount=45`，音频 packet 数为 495/497/496/497/496，五轮均 `audioLevel.status=measured`、`stoppedState=idle`。
   - native payload queue 阶段复测 `npm run media-worker:native:session`：通过，500ms 内当前 1 路 `HD Webcam` 复制 3 帧 SourceReader sample payload 到 native-only 有界队列，`frameQueue.mode=native-payload-bounded`、`payloadQueue.mode=copied-bounded`、`payloadQueue.copyCount=3`、`payloadQueue.copyErrorCount=0`、`payloadQueue.bytes=4147200`、`payloadQueue.exportedOverJson=false`，`videoPayloadCopyCount=3`、`videoPayloadQueueBytes=4147200`。
   - native payload queue 阶段复测 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress`：均通过，连续 3 轮 start/status/stop，每轮 hold 1000ms；当前 1 路硬件下每轮 `videoSamples=8`、`videoPayloadCopyCount=8`、`videoPayloadQueueBytes=4147200`、`payloadQueue.copyErrorCount=0`、`videoFrameQueueDropCount=5`。
-  - native payload queue 阶段复测 `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml`、`npm run build`、`cargo build --manifest-path native-worker/Cargo.toml`、`npm run test:all:poc`：均通过，Tauri helper 单元测试 3/3 通过，完整回归耗时约 34.0 秒；仍有 Vite chunk 体积超过 500 kB 警告。
+  - native payload queue consume 阶段新增 `consumeVideoPayloadQueue` 和 `npm run media-worker:native:payload-consume`：通过，1000ms 内当前 1 路 `HD Webcam` 复制 8 帧 payload，手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`videoPayloadConsumeCount=2`、`videoPayloadConsumedBytes=2764800`、`consumerStatus=manual-drain`、`exportedOverJson=false`。
+  - native payload queue 阶段复测 `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml`、`npm run build`、`cargo build --manifest-path native-worker/Cargo.toml`、`npm run test:all:poc`：均通过，Tauri helper 单元测试 3/3 通过，新增 payload-consume 后完整回归耗时约 36.8 秒；仍有 Vite chunk 体积超过 500 kB 警告。
   - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness`、`probe_native_worker_devices`、`start_native_worker_session`、`get_native_worker_session_status`、`stop_native_worker_session` 命令可编译。
   - 执行 `cargo test --manifest-path src-tauri/Cargo.toml`：通过，3 个 Tauri Native Worker helper 单元测试全部通过，覆盖默认 start 参数、workspace manifest 定位和 debug binary 路径命名。
   - 执行 `npm run build`：通过，Workbench 已接入 Native Worker readiness 状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；普通浏览器环境返回 `desktop-only`，不启动采集。
@@ -309,7 +310,7 @@
   - 已增加 `probeVideoCapabilities` 和 `captureVideoSample`，可验证单路 Media Foundation 原生媒体类型和首帧样本读取。
   - 已增加 `measureVideoFrames`，可验证单路 Media Foundation 连续帧读取和帧率统计；真实帧 payload 仍留在 native 侧，不通过 JSON Lines 传输。
   - 已增加 `probeAudioFormat` 和 `captureAudioBuffer`，可验证 WASAPI mix format 和短时 capture buffer 读取。
-  - 当前已接入多路视频线程结构、native-only 有界帧 payload 队列、WASAPI RMS/peak 音量统计和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入预览纹理、音频重采样/AEC、LiveKit native publisher 或真实录像。
+  - 当前已接入多路视频线程结构、native-only 有界帧 payload 队列、手动 drain 消费验证、WASAPI RMS/peak 音量统计和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入预览纹理、音频重采样/AEC、LiveKit native publisher 或真实录像。
   - 桌面端已新增 Native Worker readiness 诊断入口、工作台状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；`probe_native_worker_devices` 只通过 Native Worker 执行 `listDevices` 枚举，不执行 `start`，不启动连续采集线程；start/status/stop 控件只展示 JSON 状态统计，不传输媒体 payload。
   - start/status/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop 和 native payload queue bytes/copy 展示；该展示仍是控制面状态展示，不承载媒体 payload。
   - Tauri 持有的 Native Worker session 已增加 Drop 清理，runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。

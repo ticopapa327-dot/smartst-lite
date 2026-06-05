@@ -85,7 +85,7 @@ npm run media-worker:native-readiness:smoke
 
 - 已创建 `native-worker` Rust crate。
 - 已接入 npm 脚本：`media-worker:native`、`media-worker:native:build`、`media-worker:native:smoke`、`media-worker:native:session`。
-- 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`status`、`shutdown`。
+- 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`consumeVideoPayloadQueue`、`status`、`shutdown`。
 - 已输出 worker、device、channel、recording、livekit、error 等事件类型。
 - 已加入 `npm run test:all:poc` 回归链路。
 
@@ -93,7 +93,7 @@ npm run media-worker:native-readiness:smoke
 
 - `listDevices` 已接入 Media Foundation 视频设备枚举和 WASAPI/Core Audio 采集端点枚举。
 - 通道 `start/stop/status` 已进入真实采集会话骨架：可绑定当前 Media Foundation 视频设备、WASAPI 音频端点和默认媒体格式，并输出 `captureSession`。
-- 当前 `start` 已默认启动可停止的 Media Foundation 视频线程和 WASAPI 音频统计线程；视频线程已将 SourceReader sample payload 复制到 native-only 有界队列；尚未接入预览纹理、AEC、LiveKit native publisher 或真实录像。
+- 当前 `start` 已默认启动可停止的 Media Foundation 视频线程和 WASAPI 音频统计线程；视频线程已将 SourceReader sample payload 复制到 native-only 有界队列；`consumeVideoPayloadQueue` 可在 native 侧 drain payload 队列并只返回统计；尚未接入预览纹理、AEC、LiveKit native publisher 或真实录像。
 - JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
 
 真实采集会话骨架验证：
@@ -289,6 +289,7 @@ stop.join=ok
 - 当前实现会为每个已绑定视频通道启动一个 Media Foundation 统计线程，并通过 `stats.videoCaptureThreads[]` 返回多路状态；`stats.videoCaptureThread` 保留为第一路线程的兼容字段。
 - 本轮本机只枚举到 1 路视频设备，因此只验证了多路结构和单路线程实例；4 路采集卡现场验收时必须重新执行 1/2/4 路递增验证。
 - 线程已实现 `native-payload-bounded` 队列：SourceReader sample payload 被复制到 native 内存中的有界 FIFO，JSON Lines 只返回统计，不传输 payload；当前仍没有预览纹理、编码或录像消费者。
+- 已新增 `consumeVideoPayloadQueue` 手动 drain 命令，用于验证后续预览/发布/录像消费者可以从 native 队列取走 payload；该命令只返回 `consumedFrames`、`consumedBytes`、`remainingDepth`、`latestSequence` 等统计，不返回 payload bytes。
 
 重复启停稳定性验证：
 
@@ -503,11 +504,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path native-worker/Cargo.toml
 npm run media-worker:native:session
 npm run media-worker:native:session-stress
+npm run media-worker:native:payload-consume
 npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 3 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run test:all:poc` 完整回归耗时约 34.0 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 3 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；新增 payload-consume 后 `npm run test:all:poc` 完整回归耗时约 36.8 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 

@@ -88,9 +88,10 @@ struct AudioCaptureRuntime {
 }
 
 struct VideoCaptureRuntime {
+    channel_id: String,
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<VideoCaptureThreadStats>>,
-    _payload_queue: Arc<Mutex<VideoPayloadQueue>>,
+    payload_queue: Arc<Mutex<VideoPayloadQueue>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -152,6 +153,10 @@ struct VideoCaptureThreadStats {
     frame_payload_total_copied_bytes: u64,
     frame_payload_dropped_bytes: u64,
     frame_payload_latest_bytes: Option<u32>,
+    frame_payload_consume_count: u64,
+    frame_payload_consumed_bytes: u64,
+    frame_payload_latest_consumed_sequence: Option<u64>,
+    frame_payload_consumer_status: String,
     read_count: u64,
     sample_count: u64,
     empty_read_count: u64,
@@ -172,8 +177,16 @@ struct VideoCaptureThreadStats {
 }
 
 struct VideoPayloadQueue {
-    frames: VecDeque<Vec<u8>>,
+    frames: VecDeque<VideoPayloadFrame>,
     bytes: u64,
+}
+
+struct VideoPayloadFrame {
+    sequence: u64,
+    timestamp_hns: i64,
+    sample_time_hns: Option<i64>,
+    total_length_bytes: Option<u32>,
+    payload: Vec<u8>,
 }
 
 struct VideoPayloadQueuePush {
@@ -182,6 +195,17 @@ struct VideoPayloadQueuePush {
     payload_bytes: u32,
     dropped_frame: bool,
     dropped_bytes: u64,
+}
+
+struct VideoPayloadQueueConsume {
+    consumed_frames: u32,
+    consumed_bytes: u64,
+    latest_sequence: Option<u64>,
+    latest_timestamp_hns: Option<i64>,
+    latest_sample_time_hns: Option<i64>,
+    latest_total_length_bytes: Option<u32>,
+    remaining_depth: u32,
+    remaining_bytes: u64,
 }
 
 struct AudioLevelPacketMeasurement {
@@ -201,23 +225,23 @@ impl VideoPayloadQueue {
         }
     }
 
-    fn push(&mut self, payload: Vec<u8>, capacity: u32) -> VideoPayloadQueuePush {
+    fn push(&mut self, frame: VideoPayloadFrame, capacity: u32) -> VideoPayloadQueuePush {
         let capacity = capacity.max(1) as usize;
         let mut dropped_frame = false;
         let mut dropped_bytes = 0u64;
         while self.frames.len() >= capacity {
             if let Some(dropped) = self.frames.pop_front() {
                 dropped_frame = true;
-                dropped_bytes = dropped_bytes.saturating_add(dropped.len() as u64);
-                self.bytes = self.bytes.saturating_sub(dropped.len() as u64);
+                dropped_bytes = dropped_bytes.saturating_add(dropped.payload.len() as u64);
+                self.bytes = self.bytes.saturating_sub(dropped.payload.len() as u64);
             } else {
                 break;
             }
         }
 
-        let payload_bytes = u32::try_from(payload.len()).unwrap_or(u32::MAX);
-        self.bytes = self.bytes.saturating_add(payload.len() as u64);
-        self.frames.push_back(payload);
+        let payload_bytes = u32::try_from(frame.payload.len()).unwrap_or(u32::MAX);
+        self.bytes = self.bytes.saturating_add(frame.payload.len() as u64);
+        self.frames.push_back(frame);
 
         VideoPayloadQueuePush {
             depth: self.frames.len() as u32,
@@ -225,6 +249,40 @@ impl VideoPayloadQueue {
             payload_bytes,
             dropped_frame,
             dropped_bytes,
+        }
+    }
+
+    fn consume(&mut self, max_frames: u32) -> VideoPayloadQueueConsume {
+        let max_frames = max_frames.max(1);
+        let mut consumed_frames = 0u32;
+        let mut consumed_bytes = 0u64;
+        let mut latest_sequence = None;
+        let mut latest_timestamp_hns = None;
+        let mut latest_sample_time_hns = None;
+        let mut latest_total_length_bytes = None;
+
+        while consumed_frames < max_frames {
+            let Some(frame) = self.frames.pop_front() else {
+                break;
+            };
+            consumed_frames = consumed_frames.saturating_add(1);
+            consumed_bytes = consumed_bytes.saturating_add(frame.payload.len() as u64);
+            self.bytes = self.bytes.saturating_sub(frame.payload.len() as u64);
+            latest_sequence = Some(frame.sequence);
+            latest_timestamp_hns = Some(frame.timestamp_hns);
+            latest_sample_time_hns = frame.sample_time_hns;
+            latest_total_length_bytes = frame.total_length_bytes;
+        }
+
+        VideoPayloadQueueConsume {
+            consumed_frames,
+            consumed_bytes,
+            latest_sequence,
+            latest_timestamp_hns,
+            latest_sample_time_hns,
+            latest_total_length_bytes,
+            remaining_depth: self.frames.len() as u32,
+            remaining_bytes: self.bytes,
         }
     }
 }
@@ -352,6 +410,7 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         )),
         "start" => Ok((start_worker(state, &params), false)),
         "stop" => Ok((stop_worker(state), false)),
+        "consumeVideoPayloadQueue" => Ok((consume_video_payload_queue(state, &params)?, false)),
         "status" => Ok((state.snapshot(), false)),
         "shutdown" => {
             if state.state != "idle" {
@@ -491,6 +550,37 @@ fn stop_worker(state: &mut WorkerState) -> Value {
     state.snapshot()
 }
 
+fn consume_video_payload_queue(
+    state: &mut WorkerState,
+    params: &Value,
+) -> Result<Value, WorkerError> {
+    let max_frames = optional_u32(params, "maxFrames")
+        .map_err(|message| WorkerError::new("invalid-params", message))?
+        .unwrap_or(1)
+        .clamp(1, 120);
+    let requested_channel_id = params.get("channelId").and_then(Value::as_str);
+    let runtime = if let Some(channel_id) = requested_channel_id {
+        state
+            .video_runtimes
+            .iter()
+            .find(|runtime| runtime.channel_id == channel_id)
+    } else {
+        state.video_runtimes.first()
+    };
+    let Some(runtime) = runtime else {
+        return Err(WorkerError::new(
+            "native-media-error",
+            "No running video payload queue is available".to_string(),
+        ));
+    };
+
+    let result = runtime
+        .consume_payload_queue(max_frames)
+        .map_err(|message| WorkerError::new("native-media-error", message))?;
+    emit_event("video", "payload-queue-consumed", result.clone());
+    Ok(result)
+}
+
 fn build_capture_session_start(
     requested_channels: &[String],
     params: &Value,
@@ -608,6 +698,8 @@ fn build_capture_session_start(
         "videoPayloadCopyErrorCount": 0,
         "videoPayloadQueueBytes": 0,
         "videoPayloadTotalCopiedBytes": 0,
+        "videoPayloadConsumeCount": 0,
+        "videoPayloadConsumedBytes": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
@@ -842,6 +934,8 @@ fn mock_capture_session_start(
         "videoPayloadCopyErrorCount": 0,
         "videoPayloadQueueBytes": 0,
         "videoPayloadTotalCopiedBytes": 0,
+        "videoPayloadConsumeCount": 0,
+        "videoPayloadConsumedBytes": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
@@ -922,9 +1016,10 @@ fn start_video_capture_runtime(
     let thread_stop = Arc::clone(&stop);
     let thread_stats = Arc::clone(&stats);
     let thread_payload_queue = Arc::clone(&payload_queue);
+    let thread_channel_id = channel_id.clone();
     let handle = thread::spawn(move || {
         run_video_capture_thread(
-            channel_id,
+            thread_channel_id,
             video_index,
             media_type_index,
             frame_queue_capacity,
@@ -934,9 +1029,10 @@ fn start_video_capture_runtime(
         );
     });
     VideoCaptureRuntime {
+        channel_id,
         stop,
         stats,
-        _payload_queue: payload_queue,
+        payload_queue,
         handle: Some(handle),
     }
 }
@@ -1084,9 +1180,17 @@ fn run_video_capture_thread(
                             }
                             match payload_copy {
                                 Ok(payload) => {
+                                    let sequence = stats.sample_count;
+                                    let frame = VideoPayloadFrame {
+                                        sequence,
+                                        timestamp_hns,
+                                        sample_time_hns,
+                                        total_length_bytes: total_length,
+                                        payload,
+                                    };
                                     let push = payload_queue
                                         .lock()
-                                        .map(|mut queue| queue.push(payload, frame_queue_capacity));
+                                        .map(|mut queue| queue.push(frame, frame_queue_capacity));
                                     match push {
                                         Ok(push) => {
                                             stats.frame_queue_push_count =
@@ -1233,6 +1337,44 @@ impl VideoCaptureRuntime {
     fn update(&self, update: impl FnOnce(&mut VideoCaptureThreadStats)) {
         update_video_stats(&self.stats, update);
     }
+
+    fn consume_payload_queue(&self, max_frames: u32) -> Result<Value, String> {
+        let consume = self
+            .payload_queue
+            .lock()
+            .map_err(|_| "video payload queue lock poisoned".to_string())?
+            .consume(max_frames);
+        self.update(|stats| {
+            stats.frame_payload_queue_depth = consume.remaining_depth;
+            stats.frame_queue_depth = consume.remaining_depth;
+            stats.frame_payload_queue_bytes = consume.remaining_bytes;
+            stats.frame_payload_consume_count = stats
+                .frame_payload_consume_count
+                .saturating_add(u64::from(consume.consumed_frames));
+            stats.frame_payload_consumed_bytes = stats
+                .frame_payload_consumed_bytes
+                .saturating_add(consume.consumed_bytes);
+            stats.frame_payload_latest_consumed_sequence = consume.latest_sequence;
+            stats.frame_payload_consumer_status = "manual-drain".to_string();
+        });
+
+        Ok(json!({
+            "status": if consume.consumed_frames > 0 { "consumed" } else { "empty" },
+            "channelId": self.channel_id.clone(),
+            "consumer": "manual-drain",
+            "payloadTransport": "native-only",
+            "exportedOverJson": false,
+            "maxFrames": max_frames,
+            "consumedFrames": consume.consumed_frames,
+            "consumedBytes": consume.consumed_bytes,
+            "latestSequence": consume.latest_sequence,
+            "latestTimestampHns": consume.latest_timestamp_hns,
+            "latestSampleTimeHns": consume.latest_sample_time_hns,
+            "latestTotalLengthBytes": consume.latest_total_length_bytes,
+            "remainingDepth": consume.remaining_depth,
+            "remainingBytes": consume.remaining_bytes
+        }))
+    }
 }
 
 impl VideoCaptureThreadStats {
@@ -1265,6 +1407,10 @@ impl VideoCaptureThreadStats {
             frame_payload_total_copied_bytes: 0,
             frame_payload_dropped_bytes: 0,
             frame_payload_latest_bytes: None,
+            frame_payload_consume_count: 0,
+            frame_payload_consumed_bytes: 0,
+            frame_payload_latest_consumed_sequence: None,
+            frame_payload_consumer_status: "not-attached".to_string(),
             read_count: 0,
             sample_count: 0,
             empty_read_count: 0,
@@ -1884,6 +2030,26 @@ fn stats_with_runtimes(
                     .and_then(Value::as_u64)
             })
             .sum::<u64>();
+        let payload_consume_count = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("payloadQueue"))
+                    .and_then(|queue| queue.get("consumeCount"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
+        let payload_consumed_bytes = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("payloadQueue"))
+                    .and_then(|queue| queue.get("consumedBytes"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
         if let Some(first_video_stats) = video_stats.first() {
             stats["videoCaptureThread"] = first_video_stats.clone();
         }
@@ -1897,6 +2063,8 @@ fn stats_with_runtimes(
         stats["videoPayloadCopyErrorCount"] = json!(payload_copy_error_count);
         stats["videoPayloadQueueBytes"] = json!(payload_queue_bytes);
         stats["videoPayloadTotalCopiedBytes"] = json!(payload_total_copied_bytes);
+        stats["videoPayloadConsumeCount"] = json!(payload_consume_count);
+        stats["videoPayloadConsumedBytes"] = json!(payload_consumed_bytes);
     }
     stats
 }
@@ -1981,7 +2149,7 @@ fn video_capture_thread_stats_to_json(stats: &VideoCaptureThreadStats) -> Value 
         "frameQueue": {
             "mode": "native-payload-bounded",
             "payloadTransport": "native-only",
-            "consumerStatus": "not-attached",
+            "consumerStatus": stats.frame_payload_consumer_status.clone(),
             "capacity": stats.frame_queue_capacity,
             "depth": stats.frame_queue_depth,
             "pushCount": stats.frame_queue_push_count,
@@ -1998,9 +2166,12 @@ fn video_capture_thread_stats_to_json(stats: &VideoCaptureThreadStats) -> Value 
                 "bytes": stats.frame_payload_queue_bytes,
                 "copyCount": stats.frame_payload_copy_count,
                 "copyErrorCount": stats.frame_payload_copy_error_count,
+                "consumeCount": stats.frame_payload_consume_count,
                 "totalCopiedBytes": stats.frame_payload_total_copied_bytes,
+                "consumedBytes": stats.frame_payload_consumed_bytes,
                 "droppedBytes": stats.frame_payload_dropped_bytes,
-                "latestBytes": stats.frame_payload_latest_bytes
+                "latestBytes": stats.frame_payload_latest_bytes,
+                "latestConsumedSequence": stats.frame_payload_latest_consumed_sequence
             }
         },
         "readCount": stats.read_count,
@@ -3331,6 +3502,8 @@ fn idle_stats() -> Value {
         "videoPayloadCopyErrorCount": 0,
         "videoPayloadQueueBytes": 0,
         "videoPayloadTotalCopiedBytes": 0,
+        "videoPayloadConsumeCount": 0,
+        "videoPayloadConsumedBytes": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
