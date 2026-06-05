@@ -8,6 +8,7 @@ import {
 import { CallPanel } from "./CallPanel";
 import { ChannelGrid } from "./ChannelGrid";
 import { LiveKitPocPanel } from "./LiveKitPocPanel";
+import { NativeWorkerPanel } from "./NativeWorkerPanel";
 import { RecordingPanel } from "./RecordingPanel";
 
 interface WorkbenchPageProps {
@@ -128,6 +129,7 @@ export function WorkbenchPage({ organizationName }: WorkbenchPageProps) {
       <div className="workbench-two-column">
         <CallPanel defaultChannel={defaultChannel} />
         <LiveKitPocPanel />
+        <NativeWorkerPanel />
         <RecordingPanel channels={defaultChannels} />
       </div>
     </div>
