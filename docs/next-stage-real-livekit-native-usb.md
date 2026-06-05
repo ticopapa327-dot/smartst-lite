@@ -337,6 +337,35 @@ stoppedState=idle
 - 当前视频线程数组、元数据帧队列统计、单路音频线程和音频 RMS/peak 统计可连续完成 3 次 start/status/stop，未出现线程残留或停止后运行态误报。
 - 该验证时间仍很短，只能证明启停控制链路可重复；不能替代 30 分钟/2 小时稳定性验收。
 
+加长稳定性验证：
+
+```powershell
+$env:SMARTST_NATIVE_SESSION_STRESS_ITERATIONS="5"
+$env:SMARTST_NATIVE_SESSION_HOLD_MS="5000"
+npm run media-worker:native:session-stress
+```
+
+本机结果：
+
+```text
+测试时间：2026-06-06
+iterations=5
+holdMs=5000
+boundVideoChannels=1
+boundAudioEndpoints=1
+videoThreadCount=1
+videoSamples=48/48/48/48/48
+videoMeasuredFps≈9.64
+videoFrameQueuePushCount=48/48/48/48/48
+videoFrameQueueDropCount=45/45/45/45/45
+audioPackets=495/497/496/497/496
+audioLevel.status=measured
+audioLevel.format=float32
+stoppedState=idle/idle/idle/idle/idle
+```
+
+说明：该测试仍只覆盖当前 1 路视频设备和 1 路音频端点；它提高了 stop/join 稳定性置信度，但不能替代 4 路采集卡的 30 分钟/2 小时现场验收。
+
 WASAPI 阶段复测时的当前设备状态：
 
 ```text
