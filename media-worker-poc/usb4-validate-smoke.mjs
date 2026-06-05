@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const result = JSON.parse((await runNode(resolve(rootDir, "media-worker-poc/usb4-validate.mjs"))).stdout);
 
-assert(["blocked", "passed", "failed"].includes(result.status), "status is explicit");
+assert(["blocked", "passed", "failed", "degraded"].includes(result.status), "status is explicit");
 assert(result.requiredVideoChannels === 4, "requires four channels");
 assert(typeof result.detectedVideoChannels === "number", "detected channel count exists");
 assert(result.probeApi === "ffmpeg-directshow-preflight", "probe API is explicit");

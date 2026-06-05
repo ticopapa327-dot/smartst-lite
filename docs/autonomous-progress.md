@@ -261,8 +261,14 @@
   - 执行 `npm run media-worker:usb4-validate:smoke`：通过。
   - 执行 `npm run media-worker:usb4-validate`：返回 `blocked`，原因是当前仅检测到 1 路视频设备 `HD Webcam`，不足 4 路。
   - 执行 `npm run test:all:poc`：通过，已包含真实 JWT smoke、Native readiness smoke 和 USB4 validate smoke。
+- 4 路 USB 基础测试：
+  - 接入设备：`HD Webcam`、`thinkplus Video Camera FHD`、`罗技高清网络摄像机 C930c`、`Rapoo Camera`。
+  - 修正 `media-worker:usb4-validate` 为 4 路并发打开，不再逐路顺序打开。
+  - 执行 60 秒 4 路并发测试：`status=degraded`，4 路均能打开，但 `HD Webcam` 约 10fps，`Rapoo Camera` wallFps 约 19.6、realtimeRatio 约 0.65。
+  - 执行 `npm run test:all:poc`：通过。
 - 阻塞：
-  - 4 路 USB 现场验证需要接入至少 4 路 USB 采集卡或 UVC 视频设备。
+  - 当前 4 路基础链路可打开，但不满足 4 路 30fps 实时验收。
+  - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。
 - 下一步：
   - 用真实 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 启动业务服务，并由桌面 LiveKit PoC 面板连接真实房间。
   - 接入 4 路 USB 硬件后执行 30 分钟 `media-worker:usb4-validate`。

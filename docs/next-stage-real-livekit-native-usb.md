@@ -93,6 +93,7 @@ npm run media-worker:usb4-validate:smoke
 本机结果：
 
 ```text
+2026-06-05 初次阶段结果：
 status=blocked
 requiredVideoChannels=4
 detectedVideoChannels=1
@@ -100,11 +101,32 @@ detectedDevice=HD Webcam
 blocker=insufficient-video-devices
 ```
 
+接入 3 个外置 USB 摄像头和 1 个内置摄像头后的基础测试：
+
+```text
+测试时间：2026-06-05
+测试命令：SMARTST_USB4_DURATION_SECONDS=60 npm run media-worker:usb4-validate
+测试模式：parallel-ffmpeg-directshow
+测试分辨率：640x480
+请求帧率：30fps
+最低可接受帧率：24fps
+结果：status=degraded
+```
+
+设备和结果：
+
+```text
+1. HD Webcam：opened=true，frames=600，mediaFps=10，wallFps=9.83，degraded=true
+2. thinkplus Video Camera FHD：opened=true，frames=1801，mediaFps=30.02，wallFps=29.62，degraded=false
+3. 罗技高清网络摄像机 C930c：opened=true，frames=1801，mediaFps=30.02，wallFps=29.44，degraded=false
+4. Rapoo Camera：opened=true，frames=1800，mediaFps=30，wallFps=19.6，realtimeRatio=0.65，degraded=true
+```
+
 结论：
 
-- 本机当前只有 1 路视频设备，不能代表手术室 4 路 USB 采集能力。
-- 4 路 USB 验证必须在插入 4 路采集卡或 4 路 UVC 设备后执行。
-- 当前脚本不会把 1 路内置摄像头误判为 4 路验证通过。
+- 当前 4 路可以并发打开，基本链路成立。
+- 当前不是 4 路 30fps 实时验收通过，因为 HD Webcam 和 Rapoo Camera 低于阈值。
+- 该结果只能作为基础可用性测试，不能作为正式手术室 4 路采集卡验收。
 
 现场验证命令：
 
