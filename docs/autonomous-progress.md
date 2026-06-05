@@ -288,6 +288,7 @@
   - 执行 `npm run media-worker:native:session-stress`：通过，连续 3 轮 start/status/stop，每轮 hold 1000ms；当前 1 路硬件下 `videoThreadCount=1`，视频样本数均为 8，`videoFrameQueuePushCount` 均为 8，`videoFrameQueueDropCount` 均为 5，音频 packet 数为 95/96/95，三轮 `audioLevel.status=measured`、`audioLevel.format=float32`，三轮 `stoppedState=idle`。
   - 执行 `$env:SMARTST_NATIVE_SESSION_STRESS_ITERATIONS=5; $env:SMARTST_NATIVE_SESSION_HOLD_MS=5000; npm run media-worker:native:session-stress`：通过，连续 5 轮 start/status/stop，每轮 hold 5000ms；当前 1 路硬件下每轮 `videoSamples=48`、`videoFrameQueuePushCount=48`、`videoFrameQueueDropCount=45`，音频 packet 数为 495/497/496/497/496，五轮均 `audioLevel.status=measured`、`stoppedState=idle`。
   - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness`、`probe_native_worker_devices`、`start_native_worker_session`、`get_native_worker_session_status`、`stop_native_worker_session` 命令可编译。
+  - 执行 `cargo test --manifest-path src-tauri/Cargo.toml`：通过，3 个 Tauri Native Worker helper 单元测试全部通过，覆盖默认 start 参数、workspace manifest 定位和 debug binary 路径命名。
   - 执行 `npm run build`：通过，Workbench 已接入 Native Worker readiness 状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；普通浏览器环境返回 `desktop-only`，不启动采集。
   - 执行 `npm run test:all:poc`：通过，完整回归耗时约 32.1 秒；仍有 Vite chunk 体积超过 500 kB 警告。
 - 4 路 USB 基础测试：

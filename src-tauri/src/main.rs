@@ -1843,3 +1843,45 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running SmartST Lite");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_native_worker_start_params_keep_media_payload_native() {
+        let params = default_native_worker_start_params();
+
+        assert_eq!(params["channels"][0], json!("field-camera"));
+        assert_eq!(params["channels"][1], json!("endoscope"));
+        assert_eq!(params["startVideoThread"], json!(true));
+        assert_eq!(params["startAudioThread"], json!(true));
+        assert_eq!(params["videoFrameQueueCapacity"], json!(3));
+    }
+
+    #[test]
+    fn workspace_root_resolves_native_worker_manifest() {
+        let workspace_root = workspace_root_dir().expect("workspace root resolves");
+
+        assert!(workspace_root
+            .join("native-worker")
+            .join("Cargo.toml")
+            .is_file());
+    }
+
+    #[test]
+    fn native_worker_executable_path_uses_debug_binary_name() {
+        let workspace_root = PathBuf::from("D:/workspace");
+        let executable_path = native_worker_executable_path(&workspace_root);
+        let file_name = executable_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+
+        if cfg!(windows) {
+            assert_eq!(file_name, "smartst-native-worker.exe");
+        } else {
+            assert_eq!(file_name, "smartst-native-worker");
+        }
+    }
+}

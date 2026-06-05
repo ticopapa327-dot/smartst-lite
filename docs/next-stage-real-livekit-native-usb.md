@@ -490,10 +490,11 @@ cargoVersion=<cargo --version>
 
 ```powershell
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 npm run build
 ```
 
-结果：均通过；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 3 个 Tauri Native Worker helper 单元测试；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 
