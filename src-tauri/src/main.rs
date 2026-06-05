@@ -9,11 +9,11 @@ use sha1::{Digest, Sha1};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
-    io::{Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -70,6 +70,15 @@ struct NativeWorkerReadiness {
     executable_exists: bool,
     cargo_available: bool,
     cargo_version: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeWorkerDeviceProbe {
+    status: String,
+    readiness: NativeWorkerReadiness,
+    devices: Value,
     message: String,
 }
 
@@ -209,6 +218,67 @@ fn get_native_worker_readiness() -> Result<NativeWorkerReadiness, String> {
         cargo_available,
         cargo_version,
         message: message.to_string(),
+    })
+}
+
+#[tauri::command]
+fn probe_native_worker_devices() -> Result<NativeWorkerDeviceProbe, String> {
+    let readiness = get_native_worker_readiness()?;
+    if readiness.status != "ready" {
+        return Ok(NativeWorkerDeviceProbe {
+            status: "unavailable".to_string(),
+            readiness,
+            devices: Value::Null,
+            message: "Native Worker is not ready for device probing.".to_string(),
+        });
+    }
+
+    let workspace_root = workspace_root_dir()?;
+    let mut command = native_worker_launch_command(&workspace_root)?;
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_no_window(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Failed to start Native Worker: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Native Worker stdout was not captured.".to_string())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Native Worker stdin was not captured.".to_string())?;
+    let (line_sender, line_receiver) = mpsc::channel::<String>();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let result = (|| {
+        wait_native_worker_ready(&line_receiver, Duration::from_secs(30))?;
+        write_native_worker_request(&mut stdin, "list-devices", "listDevices", Value::Null)?;
+        let devices =
+            wait_native_worker_response(&line_receiver, "list-devices", Duration::from_secs(30))?;
+        let _ = write_native_worker_request(&mut stdin, "shutdown", "shutdown", Value::Null);
+        Ok::<Value, String>(devices)
+    })();
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    result.map(|devices| NativeWorkerDeviceProbe {
+        status: "ok".to_string(),
+        readiness,
+        devices,
+        message: "Native Worker listDevices completed.".to_string(),
     })
 }
 
@@ -1207,6 +1277,111 @@ fn native_worker_executable_path(workspace_root: &std::path::Path) -> PathBuf {
         .join(executable_name)
 }
 
+fn native_worker_launch_command(workspace_root: &std::path::Path) -> Result<Command, String> {
+    let executable_path = native_worker_executable_path(workspace_root);
+    if executable_path.is_file() {
+        let mut command = Command::new(executable_path);
+        command.current_dir(workspace_root);
+        return Ok(command);
+    }
+
+    if command_version("cargo", "--version").is_none() {
+        return Err("Cargo is unavailable and Native Worker debug binary is missing.".to_string());
+    }
+
+    let mut command = Command::new("cargo");
+    command
+        .arg("run")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(workspace_root.join("native-worker").join("Cargo.toml"))
+        .current_dir(workspace_root);
+    Ok(command)
+}
+
+fn wait_native_worker_ready(
+    line_receiver: &mpsc::Receiver<String>,
+    timeout: Duration,
+) -> Result<(), String> {
+    let started_at = Instant::now();
+    while started_at.elapsed() < timeout {
+        let remaining = timeout.saturating_sub(started_at.elapsed());
+        let wait_for = remaining.min(Duration::from_millis(250));
+        let Ok(line) = line_receiver.recv_timeout(wait_for) else {
+            continue;
+        };
+        let Ok(message) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if message.get("type").and_then(Value::as_str) == Some("event")
+            && message
+                .get("event")
+                .and_then(|event| event.get("category"))
+                .and_then(Value::as_str)
+                == Some("worker")
+            && message
+                .get("event")
+                .and_then(|event| event.get("name"))
+                .and_then(Value::as_str)
+                == Some("ready")
+        {
+            return Ok(());
+        }
+    }
+
+    Err("Native Worker ready event timed out.".to_string())
+}
+
+fn write_native_worker_request(
+    stdin: &mut std::process::ChildStdin,
+    id: &str,
+    method: &str,
+    params: Value,
+) -> Result<(), String> {
+    let payload = if params.is_null() {
+        json!({ "id": id, "method": method })
+    } else {
+        json!({ "id": id, "method": method, "params": params })
+    };
+    writeln!(stdin, "{payload}")
+        .and_then(|_| stdin.flush())
+        .map_err(|error| format!("Failed to write Native Worker request: {error}"))
+}
+
+fn wait_native_worker_response(
+    line_receiver: &mpsc::Receiver<String>,
+    expected_id: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let started_at = Instant::now();
+    while started_at.elapsed() < timeout {
+        let remaining = timeout.saturating_sub(started_at.elapsed());
+        let wait_for = remaining.min(Duration::from_millis(250));
+        let Ok(line) = line_receiver.recv_timeout(wait_for) else {
+            continue;
+        };
+        let Ok(message) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if message.get("type").and_then(Value::as_str) != Some("response")
+            || message.get("id").and_then(Value::as_str) != Some(expected_id)
+        {
+            continue;
+        }
+        if message.get("ok").and_then(Value::as_bool) == Some(true) {
+            return Ok(message.get("result").cloned().unwrap_or(Value::Null));
+        }
+        let error_message = message
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("Native Worker command failed.");
+        return Err(error_message.to_string());
+    }
+
+    Err(format!("Native Worker response timed out: {expected_id}"))
+}
+
 fn sanitize_camera_id(camera_id: &str) -> String {
     let sanitized = camera_id
         .chars()
@@ -1511,6 +1686,7 @@ fn main() {
             save_config,
             append_log,
             get_native_worker_readiness,
+            probe_native_worker_devices,
             resolve_rtsp_stream_uri,
             start_rtsp_preview,
             stop_rtsp_preview,

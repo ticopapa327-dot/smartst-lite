@@ -20,6 +20,13 @@ export interface NativeWorkerReadiness {
   message: string;
 }
 
+export interface NativeWorkerDeviceProbe {
+  status: "ok" | "unavailable" | "desktop-only" | "error";
+  readiness: NativeWorkerReadiness;
+  devices: unknown;
+  message: string;
+}
+
 export async function getNativeWorkerReadiness(): Promise<NativeWorkerReadiness> {
   if (!isTauriRuntime()) {
     return {
@@ -47,6 +54,29 @@ export async function getNativeWorkerReadiness(): Promise<NativeWorkerReadiness>
       executableExists: false,
       cargoAvailable: false,
       cargoVersion: null,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function probeNativeWorkerDevices(): Promise<NativeWorkerDeviceProbe> {
+  const readiness = await getNativeWorkerReadiness();
+  if (!isTauriRuntime()) {
+    return {
+      status: "desktop-only",
+      readiness,
+      devices: null,
+      message: "Native Worker device probing is only available in the Windows desktop runtime.",
+    };
+  }
+
+  try {
+    return await invoke<NativeWorkerDeviceProbe>("probe_native_worker_devices");
+  } catch (error) {
+    return {
+      status: "error",
+      readiness,
+      devices: null,
       message: error instanceof Error ? error.message : String(error),
     };
   }
