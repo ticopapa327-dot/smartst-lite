@@ -79,6 +79,7 @@ try {
   const before = await request("status");
   const videoThreads = getVideoThreads(before.stats);
   const firstThread = videoThreads[0];
+  let summary;
 
   if ((started.captureSession?.boundVideoChannels ?? 0) > 0) {
     assert(firstThread, "video thread is available before consume");
@@ -100,13 +101,32 @@ try {
     assert(after.stats?.videoPayloadConsumedBytes >= consumed.consumedBytes, "payload consumed bytes aggregate is updated");
     assert(getVideoThreads(after.stats)[0]?.frameQueue?.consumerStatus === "manual-drain", "payload consumer status is visible");
 
-    console.log(JSON.stringify({ started: started.captureSession, before: before.stats, consumed, after: after.stats }, null, 2));
+    summary = {
+      status: "passed",
+      mode: started.captureSession?.mode,
+      boundVideoChannels: started.captureSession?.boundVideoChannels,
+      channelId: firstThread.channelId,
+      copiedFrames: before.stats?.videoPayloadCopyCount ?? 0,
+      queuedBytesBefore: before.stats?.videoPayloadQueueBytes ?? 0,
+      consumedFrames: consumed.consumedFrames,
+      consumedBytes: consumed.consumedBytes,
+      remainingDepth: consumed.remainingDepth,
+      queuedBytesAfter: after.stats?.videoPayloadQueueBytes ?? 0,
+      consumerStatus: getVideoThreads(after.stats)[0]?.frameQueue?.consumerStatus ?? null,
+      exportedOverJson: consumed.exportedOverJson,
+    };
   } else {
-    console.log(JSON.stringify({ status: "skipped", reason: "no-bound-video-channel", started: started.captureSession }, null, 2));
+    summary = {
+      status: "skipped",
+      reason: "no-bound-video-channel",
+      mode: started.captureSession?.mode,
+      boundVideoChannels: started.captureSession?.boundVideoChannels ?? 0,
+    };
   }
 
   const stopped = await request("stop");
   assert(stopped.captureSession?.state === "idle", "worker stops after payload consume");
+  console.log(JSON.stringify({ ...summary, stoppedState: stopped.captureSession?.state }, null, 2));
   completed = true;
   await request("shutdown");
 } finally {

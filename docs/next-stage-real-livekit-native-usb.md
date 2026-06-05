@@ -510,7 +510,7 @@ npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 4 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；新增 Tauri/UI drain 控制后 `npm run test:all:poc` 完整回归耗时约 35.7 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 4 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧 payload copy，`npm run media-worker:native:session-stress` 验证 3 轮重复启停每轮 8 帧 payload copy 且 `copyErrorCount=0`；`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；新增 Tauri/UI drain 控制后 `npm run test:all:poc` 完整回归耗时约 35-36 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 
