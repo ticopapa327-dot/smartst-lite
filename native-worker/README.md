@@ -15,7 +15,7 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 - `measureVideoFrames` runs a short Media Foundation SourceReader loop and returns frame-rate statistics only.
 - `probeAudioFormat` reads WASAPI mix format for capture endpoints.
 - `captureAudioBuffer` verifies short WASAPI capture buffer access and returns packet/frame statistics only.
-- No frame queue, preview renderer, AEC processing, LiveKit native publishing, or real recording yet.
+- Video threads expose a metadata-only bounded `frameQueue`; real frame payload queues, preview rendering, AEC processing, LiveKit native publishing, and real recording are still not implemented.
 
 ## Run
 

@@ -75,11 +75,11 @@ npm run media-worker:native-readiness:smoke
 - 音频生产采集路径：WASAPI。
 - FFmpeg/DirectShow 只作为验证和兜底，不作为正式采集 API。
 
-下一步实现点：
+已完成实现点：
 
-- 创建 Rust Worker crate。
-- 先移植 `listDevices/start/stop/status` 控制面。
-- 再接 Media Foundation/WASAPI 设备枚举。
+- 已创建 Rust Worker crate。
+- 已移植 `listDevices/start/stop/status` 控制面。
+- 已接入 Media Foundation/WASAPI 设备枚举、连续视频统计线程、连续 WASAPI 统计线程和 metadata-only frameQueue。
 
 控制面骨架实现结果：
 
@@ -93,7 +93,7 @@ npm run media-worker:native-readiness:smoke
 
 - `listDevices` 已接入 Media Foundation 视频设备枚举和 WASAPI/Core Audio 采集端点枚举。
 - 通道 `start/stop/status` 已进入真实采集会话骨架：可绑定当前 Media Foundation 视频设备、WASAPI 音频端点和默认媒体格式，并输出 `captureSession`。
-- 当前 `start` 仍不启动长驻采集线程，尚未接入连续音频线程、AEC、LiveKit native publisher 或真实录像。
+- 当前 `start` 已默认启动可停止的 Media Foundation 视频统计线程和 WASAPI 音频统计线程；尚未接入真实帧 payload 队列、预览纹理、AEC、LiveKit native publisher 或真实录像。
 - JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
 
 真实采集会话骨架验证：
@@ -138,7 +138,7 @@ continuousAudioThreads=running
 - 当前设备数量不足时不阻塞启动，缺失通道被标记为 `waiting-for-device`，符合当前“忽略摄像头数量继续开发”的阶段决策。
 - `start` 在绑定 Media Foundation 视频设备和 WASAPI 音频端点后默认启动可停止的连续统计线程，`status` 可读取视频 sample/FPS/byte 计数和音频 packet/frame/byte 计数。
 - `stop` 会清理 `captureSession` 并重置 session 统计，避免 UI/监控误判为仍在真实采集中。
-- 该能力仍不是生产采集：没有帧队列、没有预览纹理、没有 AEC、没有 LiveKit publisher、没有录像写入。
+- 该能力仍不是生产采集：只有 metadata-only 帧队列统计，没有真实帧 payload 队列、预览纹理、AEC、LiveKit publisher 或录像写入。
 
 真实设备枚举结果：
 
