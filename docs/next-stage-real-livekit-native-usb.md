@@ -663,7 +663,7 @@ cargoVersion=<cargo --version>
 - 该入口只做路径、manifest、debug binary 和 Cargo 可用性诊断，不启动采集、不占用摄像头、不发布 LiveKit。
 - `probe_native_worker_devices` 会启动 Native Worker 子进程，等待 `worker.ready`，发送 `listDevices`，随后发送 `shutdown` 并清理进程；该命令只枚举 Media Foundation/WASAPI 设备，不执行 `start`，不打开连续采集线程。
 - 工作台新增 `Device Probe` 面板，用户手动点击 `Probe devices` 后才调用 `probe_native_worker_devices`，显示视频/音频枚举数量和设备来源。
-- 工作台新增手动 `Start session`、`Status`、`Drain video`、`Drain audio`、`Drain AV`、`Stop` 控件；`Start session` 会按默认 `field-camera,endoscope` 参数启动 Native Worker `start`，并返回 `framesProduced`、`audioPacketsProduced` 等统计；`Drain video` 调用 Tauri `consume_native_worker_video_payload_queue`，`Drain audio` 调用 Tauri `consume_native_worker_audio_payload_queue`，`Drain AV` 顺序触发 1 帧视频 drain 和 5 个 PCM packet drain；这些控件都只 drain native queue 并刷新统计。
+- 工作台新增手动 `Start session`、`Status`、`Drain video`、`Drain audio`、`Drain AV`、`Stop` 控件；`Start session` 会按默认 `field-camera,endoscope` 参数启动 Native Worker `start`，并返回 `framesProduced`、`audioPacketsProduced` 等统计；`Drain video` 调用 Tauri `consume_native_worker_video_payload_queue`，`Drain audio` 调用 Tauri `consume_native_worker_audio_payload_queue`，`Drain AV` 顺序触发 1 帧视频 drain 和 5 个 PCM packet drain；drain 后的 consumed 卡片展示 `status / seq / depth / frames|packets`，这些控件都只 drain native queue 并刷新统计。
 - start/status/drain/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、视频 native payload queue bytes/copy/consume 和音频 native PCM queue bytes/copy/consume 展示；该展示仍只来自 JSON 控制面状态，不承载媒体 payload。
 - Tauri 持有的 Native Worker session 在 runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。
 

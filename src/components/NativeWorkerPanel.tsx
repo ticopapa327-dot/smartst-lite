@@ -218,14 +218,14 @@ export function NativeWorkerPanel() {
           <Activity size={18} />
           <strong>{payloadConsumeCount} video consumed</strong>
           <span>
-            {formatBytes(payloadConsumedBytes)} drained / {videoPayloadConsume?.status ?? "not-drained"}
+            {formatBytes(payloadConsumedBytes)} drained / {formatDrainDetail(videoPayloadConsume, "video")}
           </span>
         </div>
         <div className="recording-stat">
           <Mic size={18} />
           <strong>{audioPayloadConsumeCount} audio consumed</strong>
           <span>
-            {formatBytes(audioPayloadConsumedBytes)} PCM drained / {audioPayloadConsume?.status ?? "not-drained"}
+            {formatBytes(audioPayloadConsumedBytes)} PCM drained / {formatDrainDetail(audioPayloadConsume, "audio")}
           </span>
         </div>
       </div>
@@ -276,4 +276,22 @@ function formatBytes(bytes: number): string {
     unitIndex += 1;
   }
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatDrainDetail(result: NativeWorkerPayloadConsumeResult | null, kind: "video" | "audio"): string {
+  if (!result) return "not-drained";
+  const pieces = [result.status ?? "unknown"];
+  const latestSequence = result.latestSequence;
+  if (typeof latestSequence === "number" && Number.isInteger(latestSequence)) {
+    pieces.push(`seq ${latestSequence}`);
+  }
+  const remainingDepth = result.remainingDepth;
+  if (typeof remainingDepth === "number" && Number.isFinite(remainingDepth)) {
+    pieces.push(`depth ${remainingDepth}`);
+  }
+  const count = kind === "video" ? result.consumedFrames : result.consumedPackets;
+  if (typeof count === "number" && Number.isFinite(count)) {
+    pieces.push(`${count} ${kind === "video" ? "frames" : "packets"}`);
+  }
+  return pieces.join(" / ");
 }
