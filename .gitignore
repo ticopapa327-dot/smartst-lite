@@ -8,6 +8,7 @@ dist-web-observer-poc/
 # Tauri and Rust build output
 src-tauri/target/
 native-worker/target/
+native-worker/.tmp/
 
 # Logs and local runtime data
 *.log

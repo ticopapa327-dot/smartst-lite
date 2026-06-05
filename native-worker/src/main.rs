@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 use std::collections::VecDeque;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::ptr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -174,6 +176,23 @@ struct AudioPayloadQueueConsume {
     latest_frames: Option<u32>,
     remaining_depth: u32,
     remaining_bytes: u64,
+}
+
+struct AudioPayloadQueueDrain {
+    packets: Vec<AudioPayloadPacket>,
+    consumed_bytes: u64,
+    remaining_depth: u32,
+    remaining_bytes: u64,
+}
+
+struct AudioWavFormat {
+    format_tag: u16,
+    channels: u16,
+    samples_per_sec: u32,
+    avg_bytes_per_sec: u32,
+    block_align: u16,
+    bits_per_sample: u16,
+    source_format: Value,
 }
 
 #[derive(Clone)]
@@ -375,22 +394,36 @@ impl AudioPayloadQueue {
         }
     }
 
-    fn consume(&mut self, max_packets: u32) -> AudioPayloadQueueConsume {
+    fn drain(&mut self, max_packets: u32) -> AudioPayloadQueueDrain {
         let max_packets = max_packets.max(1);
-        let mut consumed_packets = 0u32;
+        let mut packets = Vec::new();
         let mut consumed_bytes = 0u64;
+
+        while (packets.len() as u32) < max_packets {
+            let Some(packet) = self.packets.pop_front() else {
+                break;
+            };
+            consumed_bytes = consumed_bytes.saturating_add(packet.payload.len() as u64);
+            self.bytes = self.bytes.saturating_sub(packet.payload.len() as u64);
+            packets.push(packet);
+        }
+
+        AudioPayloadQueueDrain {
+            packets,
+            consumed_bytes,
+            remaining_depth: self.packets.len() as u32,
+            remaining_bytes: self.bytes,
+        }
+    }
+
+    fn consume(&mut self, max_packets: u32) -> AudioPayloadQueueConsume {
+        let drain = self.drain(max_packets);
         let mut latest_sequence = None;
         let mut latest_device_position = None;
         let mut latest_qpc_position = None;
         let mut latest_frames = None;
 
-        while consumed_packets < max_packets {
-            let Some(packet) = self.packets.pop_front() else {
-                break;
-            };
-            consumed_packets = consumed_packets.saturating_add(1);
-            consumed_bytes = consumed_bytes.saturating_add(packet.payload.len() as u64);
-            self.bytes = self.bytes.saturating_sub(packet.payload.len() as u64);
+        for packet in &drain.packets {
             latest_sequence = Some(packet.sequence);
             latest_device_position = packet.device_position;
             latest_qpc_position = packet.qpc_position;
@@ -398,14 +431,14 @@ impl AudioPayloadQueue {
         }
 
         AudioPayloadQueueConsume {
-            consumed_packets,
-            consumed_bytes,
+            consumed_packets: drain.packets.len() as u32,
+            consumed_bytes: drain.consumed_bytes,
             latest_sequence,
             latest_device_position,
             latest_qpc_position,
             latest_frames,
-            remaining_depth: self.packets.len() as u32,
-            remaining_bytes: self.bytes,
+            remaining_depth: drain.remaining_depth,
+            remaining_bytes: drain.remaining_bytes,
         }
     }
 }
@@ -535,6 +568,9 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         "stop" => Ok((stop_worker(state), false)),
         "consumeVideoPayloadQueue" => Ok((consume_video_payload_queue(state, &params)?, false)),
         "consumeAudioPayloadQueue" => Ok((consume_audio_payload_queue(state, &params)?, false)),
+        "exportAudioPayloadQueueWav" => {
+            Ok((export_audio_payload_queue_wav(state, &params)?, false))
+        }
         "status" => Ok((state.snapshot(), false)),
         "shutdown" => {
             if state.state != "idle" {
@@ -733,6 +769,38 @@ fn consume_audio_payload_queue(
         .consume_payload_queue(max_packets)
         .map_err(|message| WorkerError::new("native-media-error", message))?;
     emit_event("audio", "payload-queue-consumed", result.clone());
+    Ok(result)
+}
+
+fn export_audio_payload_queue_wav(
+    state: &mut WorkerState,
+    params: &Value,
+) -> Result<Value, WorkerError> {
+    let max_packets = optional_u32(params, "maxPackets")
+        .map_err(|message| WorkerError::new("invalid-params", message))?
+        .unwrap_or(50)
+        .clamp(1, 500);
+    let overwrite = params
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(WorkerError::new(
+            "invalid-params",
+            "exportAudioPayloadQueueWav requires a path".to_string(),
+        ));
+    };
+    let Some(runtime) = state.audio_runtime.as_ref() else {
+        return Err(WorkerError::new(
+            "native-media-error",
+            "No running audio payload queue is available".to_string(),
+        ));
+    };
+
+    let result = runtime
+        .export_payload_queue_wav(PathBuf::from(path), max_packets, overwrite)
+        .map_err(|message| WorkerError::new("native-media-error", message))?;
+    emit_event("audio", "payload-queue-wav-exported", result.clone());
     Ok(result)
 }
 
@@ -1925,6 +1993,127 @@ fn copy_audio_packet_payload(
     Ok(bytes.to_vec())
 }
 
+fn audio_wav_format_from_mix_format(mix_format: &Value) -> Result<AudioWavFormat, String> {
+    if mix_format.is_null() {
+        return Err("audio mix format is not available yet".to_string());
+    }
+    let source_format_tag = json_u16(mix_format, "formatTag")?;
+    let sub_format_name = mix_format.get("subFormatName").and_then(Value::as_str);
+    let format_tag = if source_format_tag == WAVE_FORMAT_PCM_TAG || sub_format_name == Some("PCM") {
+        WAVE_FORMAT_PCM_TAG
+    } else if source_format_tag == WAVE_FORMAT_IEEE_FLOAT_TAG
+        || sub_format_name == Some("IEEE_FLOAT")
+    {
+        WAVE_FORMAT_IEEE_FLOAT_TAG
+    } else {
+        return Err(format!(
+            "unsupported audio WAV export format: tag={source_format_tag}, subFormat={}",
+            sub_format_name.unwrap_or("unknown")
+        ));
+    };
+    let channels = json_u16(mix_format, "channels")?.max(1);
+    let samples_per_sec = json_u32(mix_format, "samplesPerSec")?.max(1);
+    let bits_per_sample = json_u16(mix_format, "bitsPerSample")?.max(1);
+    let block_align = mix_format
+        .get("blockAlign")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or_else(|| channels.saturating_mul(bits_per_sample / 8))
+        .max(1);
+    let avg_bytes_per_sec = mix_format
+        .get("avgBytesPerSec")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or_else(|| samples_per_sec.saturating_mul(u32::from(block_align)))
+        .max(1);
+
+    Ok(AudioWavFormat {
+        format_tag,
+        channels,
+        samples_per_sec,
+        avg_bytes_per_sec,
+        block_align,
+        bits_per_sample,
+        source_format: mix_format.clone(),
+    })
+}
+
+fn build_wav_bytes(format: &AudioWavFormat, audio_data: &[u8]) -> Result<Vec<u8>, String> {
+    let data_size = u32::try_from(audio_data.len())
+        .map_err(|_| "audio WAV data is too large for a RIFF/WAVE file".to_string())?;
+    let riff_size = 36u32
+        .checked_add(data_size)
+        .ok_or_else(|| "audio WAV RIFF size overflow".to_string())?;
+    let mut bytes = Vec::with_capacity(44usize.saturating_add(audio_data.len()));
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&riff_size.to_le_bytes());
+    bytes.extend_from_slice(b"WAVE");
+    bytes.extend_from_slice(b"fmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&format.format_tag.to_le_bytes());
+    bytes.extend_from_slice(&format.channels.to_le_bytes());
+    bytes.extend_from_slice(&format.samples_per_sec.to_le_bytes());
+    bytes.extend_from_slice(&format.avg_bytes_per_sec.to_le_bytes());
+    bytes.extend_from_slice(&format.block_align.to_le_bytes());
+    bytes.extend_from_slice(&format.bits_per_sample.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_size.to_le_bytes());
+    bytes.extend_from_slice(audio_data);
+    Ok(bytes)
+}
+
+fn write_wav_file(path: &PathBuf, bytes: &[u8], overwrite: bool) -> Result<(), String> {
+    if path.exists() && !overwrite {
+        return Err(format!(
+            "audio WAV output already exists: {}",
+            path.to_string_lossy()
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create audio WAV output directory {}: {error}",
+                    parent.to_string_lossy()
+                )
+            })?;
+        }
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|error| {
+            format!(
+                "failed to open audio WAV output {}: {error}",
+                path.to_string_lossy()
+            )
+        })?;
+    file.write_all(bytes).map_err(|error| {
+        format!(
+            "failed to write audio WAV output {}: {error}",
+            path.to_string_lossy()
+        )
+    })
+}
+
+fn json_u16(value: &Value, key: &str) -> Result<u16, String> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|raw| u16::try_from(raw).ok())
+        .ok_or_else(|| format!("audio mix format field {key} is missing or invalid"))
+}
+
+fn json_u32(value: &Value, key: &str) -> Result<u32, String> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok())
+        .ok_or_else(|| format!("audio mix format field {key} is missing or invalid"))
+}
+
 fn apply_audio_level_packet(
     stats: &mut AudioCaptureThreadStats,
     packet: AudioLevelPacketMeasurement,
@@ -2197,6 +2386,97 @@ impl AudioCaptureRuntime {
             "latestFrames": consume.latest_frames,
             "remainingDepth": consume.remaining_depth,
             "remainingBytes": consume.remaining_bytes
+        }))
+    }
+
+    fn export_payload_queue_wav(
+        &self,
+        path: PathBuf,
+        max_packets: u32,
+        overwrite: bool,
+    ) -> Result<Value, String> {
+        let mix_format = self
+            .stats
+            .lock()
+            .map_err(|_| "audio capture stats lock poisoned".to_string())?
+            .mix_format
+            .clone();
+        let wav_format = audio_wav_format_from_mix_format(&mix_format)?;
+        let drain = self
+            .payload_queue
+            .lock()
+            .map_err(|_| "audio payload queue lock poisoned".to_string())?
+            .drain(max_packets);
+        let consumed_packets = drain.packets.len() as u32;
+        let latest_packet = drain.packets.last();
+        let latest_sequence = latest_packet.map(|packet| packet.sequence);
+        let latest_device_position = latest_packet.and_then(|packet| packet.device_position);
+        let latest_qpc_position = latest_packet.and_then(|packet| packet.qpc_position);
+        let latest_frames = latest_packet.map(|packet| packet.frames);
+        if consumed_packets == 0 {
+            return Ok(json!({
+                "status": "empty",
+                "consumer": "wav-export",
+                "payloadTransport": "native-only",
+                "exportedOverJson": false,
+                "maxPackets": max_packets,
+                "consumedPackets": 0,
+                "consumedBytes": 0,
+                "remainingDepth": drain.remaining_depth,
+                "remainingBytes": drain.remaining_bytes,
+                "path": path.to_string_lossy().to_string()
+            }));
+        }
+
+        let mut audio_data = Vec::new();
+        for packet in drain.packets {
+            audio_data.extend_from_slice(&packet.payload);
+        }
+        let wav_bytes = build_wav_bytes(&wav_format, &audio_data)?;
+        write_wav_file(&path, &wav_bytes, overwrite)?;
+        let file_bytes = u64::try_from(wav_bytes.len()).unwrap_or(u64::MAX);
+        let data_bytes = u64::try_from(audio_data.len()).unwrap_or(u64::MAX);
+
+        self.update(|stats| {
+            stats.payload_queue_depth = drain.remaining_depth;
+            stats.payload_queue_bytes = drain.remaining_bytes;
+            stats.payload_queue_consume_count = stats
+                .payload_queue_consume_count
+                .saturating_add(u64::from(consumed_packets));
+            stats.payload_queue_consumed_bytes = stats
+                .payload_queue_consumed_bytes
+                .saturating_add(data_bytes);
+            stats.payload_queue_latest_consumed_sequence = latest_sequence;
+            stats.payload_queue_consumer_status = "wav-export".to_string();
+        });
+
+        Ok(json!({
+            "status": "exported",
+            "consumer": "wav-export",
+            "payloadTransport": "native-only",
+            "exportedOverJson": false,
+            "fileFormat": "wav",
+            "path": path.to_string_lossy().to_string(),
+            "maxPackets": max_packets,
+            "consumedPackets": consumed_packets,
+            "consumedBytes": data_bytes,
+            "fileBytes": file_bytes,
+            "latestSequence": latest_sequence,
+            "latestDevicePosition": latest_device_position,
+            "latestQpcPosition": latest_qpc_position,
+            "latestFrames": latest_frames,
+            "remainingDepth": drain.remaining_depth,
+            "remainingBytes": drain.remaining_bytes,
+            "waveFormat": {
+                "formatTag": wav_format.format_tag,
+                "formatTagName": wave_format_tag_name(wav_format.format_tag),
+                "channels": wav_format.channels,
+                "samplesPerSec": wav_format.samples_per_sec,
+                "avgBytesPerSec": wav_format.avg_bytes_per_sec,
+                "blockAlign": wav_format.block_align,
+                "bitsPerSample": wav_format.bits_per_sample,
+                "sourceMixFormat": wav_format.source_format
+            }
         }))
     }
 }
