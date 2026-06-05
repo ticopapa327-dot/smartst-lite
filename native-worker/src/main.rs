@@ -41,6 +41,7 @@ struct WorkerState {
     state: String,
     started_at: Option<String>,
     stopped_at: Option<String>,
+    capture_session: Value,
     channels: Vec<Value>,
     recording: Value,
     livekit: Value,
@@ -67,6 +68,13 @@ struct AudioDeviceRecord {
     device: IMMDevice,
 }
 
+struct CaptureSessionStart {
+    channels: Vec<Value>,
+    device_snapshot: Value,
+    capture_session: Value,
+    stats: Value,
+}
+
 impl WorkerState {
     fn new() -> Self {
         Self {
@@ -75,15 +83,11 @@ impl WorkerState {
             state: "idle".to_string(),
             started_at: None,
             stopped_at: None,
+            capture_session: idle_capture_session(),
             channels: Vec::new(),
             recording: idle_recording(),
             livekit: idle_livekit(),
-            stats: json!({
-                "uptimeMs": 0,
-                "framesProduced": 0,
-                "audioPacketsProduced": 0,
-                "syntheticFramesProduced": 0
-            }),
+            stats: idle_stats(),
             last_error: None,
         }
     }
@@ -95,6 +99,7 @@ impl WorkerState {
             "state": self.state,
             "startedAt": self.started_at,
             "stoppedAt": self.stopped_at,
+            "captureSession": self.capture_session,
             "channels": self.channels,
             "recording": self.recording,
             "livekit": self.livekit,
@@ -219,35 +224,20 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
                 .collect()
         });
 
+    let started_at = now_iso_like();
+    let session_start = build_capture_session_start(&requested_channels, &params, &started_at);
+
     state.state = "running".to_string();
-    state.started_at = Some(now_iso_like());
+    state.started_at = Some(started_at);
     state.stopped_at = None;
-    state.channels = requested_channels
-        .iter()
-        .enumerate()
-        .map(|(index, channel_id)| {
-            json!({
-                "channelId": channel_id,
-                "state": "previewing",
-                "source": "mock-native",
-                "trackName": format!("video:{channel_id}"),
-                "width": 1920,
-                "height": 1080,
-                "frameRate": 30,
-                "priority": index + 1
-            })
-        })
-        .collect();
+    state.channels = session_start.channels;
+    state.capture_session = session_start.capture_session;
     state.recording = idle_recording();
     state.livekit = idle_livekit();
-    state.stats = json!({
-        "uptimeMs": 0,
-        "framesProduced": 0,
-        "audioPacketsProduced": 0,
-        "syntheticFramesProduced": 0
-    });
+    state.stats = session_start.stats;
 
-    emit_event("device", "snapshot", enumerate_native_devices());
+    emit_event("device", "snapshot", session_start.device_snapshot);
+    emit_event("capture", "session-started", state.capture_session.clone());
     for channel in &state.channels {
         emit_event("channel", "started", channel.clone());
     }
@@ -273,13 +263,361 @@ fn stop_worker(state: &mut WorkerState) -> Value {
         );
     }
 
+    let previous_session = state.capture_session.clone();
     state.state = "idle".to_string();
     state.stopped_at = Some(now_iso_like());
     state.channels.clear();
+    state.capture_session = idle_capture_session();
     state.recording = idle_recording();
     state.livekit = idle_livekit();
+    state.stats = idle_stats();
+    emit_event("capture", "session-stopped", previous_session);
     emit_event("worker", "stopped", state.snapshot());
     state.snapshot()
+}
+
+fn build_capture_session_start(
+    requested_channels: &[String],
+    params: &Value,
+    started_at: &str,
+) -> CaptureSessionStart {
+    let video_media_type_index = optional_u32(params, "videoMediaTypeIndex")
+        .ok()
+        .flatten()
+        .or_else(|| optional_u32(params, "mediaTypeIndex").ok().flatten())
+        .unwrap_or(0);
+    let audio_index = optional_u32(params, "audioIndex")
+        .ok()
+        .flatten()
+        .unwrap_or(0);
+
+    let Ok(_com) = ComApartment::initialize() else {
+        return mock_capture_session_start(
+            requested_channels,
+            started_at,
+            "com-initialization-failed",
+        );
+    };
+
+    let video_result = with_video_device_activates(|records| {
+        build_video_session_start(records, requested_channels, video_media_type_index)
+    });
+    let audio_result =
+        with_audio_capture_devices(|records| build_audio_session_start(records, audio_index));
+
+    let (video_channels, video_devices, media_foundation_diag, bound_video_channels) =
+        match video_result {
+            Ok(result) => result,
+            Err(error) => {
+                let channels = requested_channels
+                    .iter()
+                    .enumerate()
+                    .map(|(index, channel_id)| unassigned_video_channel(channel_id, index, &error))
+                    .collect::<Vec<_>>();
+                (
+                    channels,
+                    Vec::new(),
+                    json!({
+                        "status": "failed",
+                        "backend": "media-foundation",
+                        "error": error
+                    }),
+                    0usize,
+                )
+            }
+        };
+
+    let (audio, audio_devices, wasapi_diag, bound_audio_endpoints) = match audio_result {
+        Ok(result) => result,
+        Err(error) => (
+            json!({
+                "state": "unavailable",
+                "source": "wasapi",
+                "realCapture": false,
+                "reason": error
+            }),
+            Vec::new(),
+            json!({
+                "status": "failed",
+                "backend": "wasapi",
+                "error": error
+            }),
+            0usize,
+        ),
+    };
+
+    let unassigned_video_channels = video_channels
+        .iter()
+        .filter(|channel| channel.get("source").and_then(Value::as_str) == Some("unassigned"))
+        .count();
+    let device_snapshot = json!({
+        "source": "windows-native",
+        "video": video_devices,
+        "audio": audio_devices,
+        "diagnostics": {
+            "workerDeviceMode": "windows-native",
+            "mediaFoundation": media_foundation_diag,
+            "wasapi": wasapi_diag
+        }
+    });
+    let capture_session = json!({
+        "state": "running",
+        "mode": "windows-native",
+        "realMediaSession": bound_video_channels > 0 || bound_audio_endpoints > 0,
+        "startedAt": started_at,
+        "videoMediaTypeIndex": video_media_type_index,
+        "audioIndex": audio_index,
+        "requestedChannelCount": requested_channels.len(),
+        "boundVideoChannels": bound_video_channels,
+        "unassignedVideoChannels": unassigned_video_channels,
+        "boundAudioEndpoints": bound_audio_endpoints,
+        "audio": audio,
+        "mediaPayloadTransport": "native-only",
+        "continuousVideoThreads": "not-started",
+        "continuousAudioThreads": "not-started",
+        "previewStatus": "not-rendered",
+        "livekitStatus": "not-published",
+        "recordingStatus": "idle",
+        "diagnostics": device_snapshot["diagnostics"].clone()
+    });
+    let stats = json!({
+        "uptimeMs": 0,
+        "framesProduced": 0,
+        "audioPacketsProduced": 0,
+        "syntheticFramesProduced": 0,
+        "boundVideoChannels": bound_video_channels,
+        "unassignedVideoChannels": unassigned_video_channels,
+        "boundAudioEndpoints": bound_audio_endpoints,
+        "realMediaSession": capture_session["realMediaSession"].clone()
+    });
+
+    CaptureSessionStart {
+        channels: video_channels,
+        device_snapshot,
+        capture_session,
+        stats,
+    }
+}
+
+fn build_video_session_start(
+    records: Vec<VideoDeviceActivate>,
+    requested_channels: &[String],
+    media_type_index: u32,
+) -> Result<(Vec<Value>, Vec<Value>, Value, usize), String> {
+    let devices = records
+        .iter()
+        .map(video_device_record_to_json)
+        .collect::<Vec<_>>();
+    let mut bound_count = 0usize;
+    let channels = requested_channels
+        .iter()
+        .enumerate()
+        .map(|(index, channel_id)| {
+            let Some(record) = records.get(index) else {
+                return unassigned_video_channel(
+                    channel_id,
+                    index,
+                    "no-native-video-device-for-channel-index",
+                );
+            };
+            bound_count += 1;
+            let media_type = read_video_media_type_for_record(record, media_type_index);
+            let (state, media_type_value, media_error) = match media_type {
+                Ok(value) => ("native-bound", value, Value::Null),
+                Err(error) => ("device-bound", Value::Null, json!(error)),
+            };
+            let width = media_type_value
+                .get("width")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let height = media_type_value
+                .get("height")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let frame_rate = media_type_value
+                .get("frameRate")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            json!({
+                "channelId": channel_id,
+                "state": state,
+                "source": "windows-native",
+                "trackName": format!("video:{channel_id}"),
+                "width": width,
+                "height": height,
+                "frameRate": frame_rate,
+                "priority": index + 1,
+                "device": video_device_record_to_json(record),
+                "mediaType": media_type_value,
+                "mediaTypeError": media_error,
+                "realCapture": true,
+                "payloadTransport": "native-only",
+                "previewStatus": "not-rendered",
+                "publisherStatus": "not-published",
+                "recordingStatus": "idle",
+                "statsStatus": "not-started"
+            })
+        })
+        .collect::<Vec<_>>();
+    let diag = json!({
+        "status": "ok",
+        "backend": "media-foundation",
+        "count": devices.len(),
+        "sessionBindingStatus": "bound",
+        "capabilitiesStatus": "default-media-type-probed"
+    });
+    Ok((channels, devices, diag, bound_count))
+}
+
+fn build_audio_session_start(
+    records: Vec<AudioDeviceRecord>,
+    audio_index: u32,
+) -> Result<(Value, Vec<Value>, Value, usize), String> {
+    let devices = records
+        .iter()
+        .map(audio_device_record_to_json)
+        .collect::<Vec<_>>();
+    let Some(record) = records.iter().find(|record| record.index == audio_index) else {
+        return Ok((
+            json!({
+                "state": "waiting-for-device",
+                "source": "unassigned",
+                "realCapture": false,
+                "reason": format!("Audio index not found: {audio_index}")
+            }),
+            devices.clone(),
+            json!({
+                "status": "ok",
+                "backend": "wasapi",
+                "count": devices.len(),
+                "sessionBindingStatus": "audio-unassigned",
+                "capabilitiesStatus": "not-enumerated"
+            }),
+            0,
+        ));
+    };
+
+    let format_probe = probe_audio_record_format(record);
+    let (state, mix_format, device_period, error) = match format_probe {
+        Ok(value) => (
+            "native-bound",
+            value.get("mixFormat").cloned().unwrap_or(Value::Null),
+            value.get("devicePeriod").cloned().unwrap_or(Value::Null),
+            Value::Null,
+        ),
+        Err(error) => ("device-bound", Value::Null, Value::Null, json!(error)),
+    };
+    Ok((
+        json!({
+            "state": state,
+            "source": "windows-native",
+            "device": audio_device_record_to_json(record),
+            "mixFormat": mix_format,
+            "devicePeriod": device_period,
+            "formatError": error,
+            "realCapture": true,
+            "payloadTransport": "native-only",
+            "aecStatus": "not-started",
+            "publisherStatus": "not-published",
+            "recordingStatus": "idle",
+            "statsStatus": "not-started"
+        }),
+        devices.clone(),
+        json!({
+            "status": "ok",
+            "backend": "wasapi",
+            "count": devices.len(),
+            "sessionBindingStatus": "bound",
+            "capabilitiesStatus": "mix-format-probed"
+        }),
+        1,
+    ))
+}
+
+fn unassigned_video_channel(channel_id: &str, index: usize, reason: &str) -> Value {
+    json!({
+        "channelId": channel_id,
+        "state": "waiting-for-device",
+        "source": "unassigned",
+        "trackName": format!("video:{channel_id}"),
+        "width": Value::Null,
+        "height": Value::Null,
+        "frameRate": Value::Null,
+        "priority": index + 1,
+        "device": Value::Null,
+        "mediaType": Value::Null,
+        "realCapture": false,
+        "reason": reason,
+        "payloadTransport": "none",
+        "previewStatus": "not-rendered",
+        "publisherStatus": "not-published",
+        "recordingStatus": "idle",
+        "statsStatus": "not-started"
+    })
+}
+
+fn mock_capture_session_start(
+    requested_channels: &[String],
+    started_at: &str,
+    reason: &str,
+) -> CaptureSessionStart {
+    let channels = requested_channels
+        .iter()
+        .enumerate()
+        .map(|(index, channel_id)| {
+            json!({
+                "channelId": channel_id,
+                "state": "previewing",
+                "source": "mock-native",
+                "trackName": format!("video:{channel_id}"),
+                "width": 1920,
+                "height": 1080,
+                "frameRate": 30,
+                "priority": index + 1,
+                "realCapture": false,
+                "payloadTransport": "none",
+                "previewStatus": "mock",
+                "publisherStatus": "not-published",
+                "recordingStatus": "idle",
+                "statsStatus": "mock"
+            })
+        })
+        .collect::<Vec<_>>();
+    let device_snapshot = mock_devices();
+    let capture_session = json!({
+        "state": "running",
+        "mode": "mock-fallback",
+        "realMediaSession": false,
+        "startedAt": started_at,
+        "reason": reason,
+        "requestedChannelCount": requested_channels.len(),
+        "boundVideoChannels": 0,
+        "unassignedVideoChannels": 0,
+        "boundAudioEndpoints": 0,
+        "audio": Value::Null,
+        "mediaPayloadTransport": "none",
+        "continuousVideoThreads": "not-started",
+        "continuousAudioThreads": "not-started",
+        "previewStatus": "mock",
+        "livekitStatus": "not-published",
+        "recordingStatus": "idle"
+    });
+    let stats = json!({
+        "uptimeMs": 0,
+        "framesProduced": 0,
+        "audioPacketsProduced": 0,
+        "syntheticFramesProduced": 0,
+        "boundVideoChannels": 0,
+        "unassignedVideoChannels": 0,
+        "boundAudioEndpoints": 0,
+        "realMediaSession": false
+    });
+    CaptureSessionStart {
+        channels,
+        device_snapshot,
+        capture_session,
+        stats,
+    }
 }
 
 fn mock_devices() -> Value {
@@ -614,6 +952,32 @@ fn probe_video_record_capabilities(
             "stopReason": stop_reason,
             "capabilities": capabilities
         }))
+    })();
+    shutdown_media_source(&source, &record.activate);
+    result
+}
+
+fn read_video_media_type_for_record(
+    record: &VideoDeviceActivate,
+    media_type_index: u32,
+) -> Result<Value, String> {
+    let source: IMFMediaSource = unsafe {
+        record
+            .activate
+            .ActivateObject()
+            .map_err(format_windows_error)?
+    };
+    let result = (|| {
+        let reader = unsafe {
+            MFCreateSourceReaderFromMediaSource(&source, None::<&IMFAttributes>)
+                .map_err(format_windows_error)?
+        };
+        let media_type = unsafe {
+            reader
+                .GetNativeMediaType(video_stream_index(), media_type_index)
+                .map_err(format_windows_error)?
+        };
+        Ok(media_type_to_json(&media_type, media_type_index))
     })();
     shutdown_media_source(&source, &record.activate);
     result
@@ -1525,6 +1889,34 @@ fn idle_recording() -> Value {
     json!({
         "state": "idle",
         "activeChannelIds": []
+    })
+}
+
+fn idle_capture_session() -> Value {
+    json!({
+        "state": "idle",
+        "mode": Value::Null,
+        "realMediaSession": false,
+        "startedAt": Value::Null,
+        "mediaPayloadTransport": "native-only",
+        "continuousVideoThreads": "not-started",
+        "continuousAudioThreads": "not-started",
+        "previewStatus": "not-rendered",
+        "livekitStatus": "idle",
+        "recordingStatus": "idle"
+    })
+}
+
+fn idle_stats() -> Value {
+    json!({
+        "uptimeMs": 0,
+        "framesProduced": 0,
+        "audioPacketsProduced": 0,
+        "syntheticFramesProduced": 0,
+        "boundVideoChannels": 0,
+        "unassignedVideoChannels": 0,
+        "boundAudioEndpoints": 0,
+        "realMediaSession": false
     })
 }
 

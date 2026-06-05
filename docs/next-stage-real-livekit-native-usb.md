@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 31.6 秒。
+- 结果：通过，耗时约 33.0 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -84,7 +84,7 @@ npm run media-worker:native-readiness:smoke
 控制面骨架实现结果：
 
 - 已创建 `native-worker` Rust crate。
-- 已接入 npm 脚本：`media-worker:native`、`media-worker:native:build`、`media-worker:native:smoke`。
+- 已接入 npm 脚本：`media-worker:native`、`media-worker:native:build`、`media-worker:native:smoke`、`media-worker:native:session`。
 - 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`status`、`shutdown`。
 - 已输出 worker、device、channel、recording、livekit、error 等事件类型。
 - 已加入 `npm run test:all:poc` 回归链路。
@@ -92,8 +92,41 @@ npm run media-worker:native-readiness:smoke
 当前边界：
 
 - `listDevices` 已接入 Media Foundation 视频设备枚举和 WASAPI/Core Audio 采集端点枚举。
-- 通道 `start/stop` 仍是 mock native 状态机，尚未接入真实帧采集、WASAPI 音频流、LiveKit native publisher 或真实录像。
+- 通道 `start/stop/status` 已进入真实采集会话骨架：可绑定当前 Media Foundation 视频设备、WASAPI 音频端点和默认媒体格式，并输出 `captureSession`。
+- 当前 `start` 仍不启动长驻采集线程，尚未接入连续音频线程、AEC、LiveKit native publisher 或真实录像。
 - JSON Lines 只作为控制和状态通道，真实媒体帧不得通过该 IPC 传输。
+
+真实采集会话骨架验证：
+
+```powershell
+npm run media-worker:native:session
+```
+
+本机结果：
+
+```text
+测试时间：2026-06-06
+channels=field-camera,endoscope
+captureSession.mode=windows-native
+captureSession.realMediaSession=true
+boundVideoChannels=1
+unassignedVideoChannels=1
+boundAudioEndpoints=1
+video[0]=HD Webcam / 1280x720 NV12 30fps / state=native-bound
+video[1]=waiting-for-device / reason=no-native-video-device-for-channel-index
+audio[0]=麦克风阵列 (Senary Audio) / 48000Hz 2ch IEEE_FLOAT / state=native-bound
+stop.captureSession.state=idle
+stop.stats.realMediaSession=false
+continuousVideoThreads=not-started
+continuousAudioThreads=not-started
+```
+
+结论：
+
+- `start/status/stop` 已经可以表达真实 Native Worker 会话状态，不再只是固定 mock channel。
+- 当前设备数量不足时不阻塞启动，缺失通道被标记为 `waiting-for-device`，符合当前“忽略摄像头数量继续开发”的阶段决策。
+- `stop` 会清理 `captureSession` 并重置 session 统计，避免 UI/监控误判为仍在真实采集中。
+- 该能力仍不是生产采集：没有长驻线程、没有帧队列、没有预览纹理、没有 LiveKit publisher、没有录像写入。
 
 真实设备枚举结果：
 

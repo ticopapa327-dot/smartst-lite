@@ -57,19 +57,26 @@ try {
   });
   assert(started.state === "running", "worker starts");
   assert(started.channels.length === 2, "requested channels start");
-  assert(started.channels[0].source === "mock-native", "native mock source is explicit");
+  assert(typeof started.channels[0].source === "string", "channel source is explicit");
+  assert(started.captureSession?.state === "running", "capture session starts");
+  assert(["windows-native", "mock-fallback"].includes(started.captureSession?.mode), "capture session mode is explicit");
+  assert(started.captureSession?.mediaPayloadTransport, "capture session media transport boundary is explicit");
 
   const status = await request("status");
   assert(status.state === "running", "status reports running");
+  assert(status.captureSession?.state === "running", "status reports capture session");
   assert(status.livekit.requiresNativeSdk === true, "native SDK boundary is explicit");
 
   const stopped = await request("stop");
   assert(stopped.state === "idle", "worker stops");
+  assert(stopped.captureSession?.state === "idle", "capture session clears after stop");
   assert(stopped.channels.length === 0, "channels clear after stop");
 
   await request("shutdown");
 
   assert(hasEvent("device", "snapshot"), "device event emitted");
+  assert(hasEvent("capture", "session-started"), "capture session started event emitted");
+  assert(hasEvent("capture", "session-stopped"), "capture session stopped event emitted");
   assert(hasEvent("channel", "started"), "channel started event emitted");
   assert(hasEvent("recording", "state"), "recording event emitted");
   assert(hasEvent("livekit", "state"), "livekit event emitted");
