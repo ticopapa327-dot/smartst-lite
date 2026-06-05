@@ -1,4 +1,5 @@
 import {
+  LayoutDashboard,
   MonitorPlay,
   RadioTower,
   ShieldCheck,
@@ -13,9 +14,9 @@ interface StartupPageProps {
 }
 
 const highlights = [
-  { label: "免费手术示教", icon: Sparkles },
-  { label: "2 路摄像机", icon: Video },
-  { label: "快速转播", icon: RadioTower },
+  { label: "USB 采集优先", icon: Sparkles },
+  { label: "4 路本地预览", icon: Video },
+  { label: "LiveKit 预留", icon: RadioTower },
   { label: "Windows 可用", icon: Laptop },
 ];
 
@@ -30,7 +31,7 @@ export function StartupPage({ onChooseMode }: StartupPageProps) {
           </div>
           <h1>SmartST Lite</h1>
           <p>
-            面向医美医院、动物医院和民营医疗机构的免费 Windows 手术转播工具。
+            面向手术室本地预览、远程示教互动和录像管理的 Windows 桌面客户端。
           </p>
           <div className="highlight-row">
             {highlights.map((item) => {
@@ -63,13 +64,23 @@ export function StartupPage({ onChooseMode }: StartupPageProps) {
 
       <section className="mode-grid" aria-label="选择工作模式">
         <button
+          className="mode-tile workbench"
+          onClick={() => onChooseMode("workbench")}
+          type="button"
+        >
+          <LayoutDashboard size={32} />
+          <span>手术室工作台</span>
+          <small>USB 采集、默认画面、呼叫策略</small>
+        </button>
+
+        <button
           className="mode-tile initiator"
           onClick={() => onChooseMode("initiator")}
           type="button"
         >
           <RadioTower size={32} />
-          <span>示教发起端</span>
-          <small>手术室、操作间</small>
+          <span>历史发起端</span>
+          <small>0.1.4 ONVIF / RTSP 兼容入口</small>
         </button>
 
         <button
@@ -78,8 +89,8 @@ export function StartupPage({ onChooseMode }: StartupPageProps) {
           type="button"
         >
           <MonitorPlay size={32} />
-          <span>示教接收端</span>
-          <small>示教室、办公室、专家端</small>
+          <span>历史接收端</span>
+          <small>0.1.4 本地接收状态入口</small>
         </button>
       </section>
     </div>

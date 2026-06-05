@@ -5,6 +5,7 @@ import { InitiatorPage } from "./components/InitiatorPage";
 import { ReceiverPage } from "./components/ReceiverPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StartupPage } from "./components/StartupPage";
+import { WorkbenchPage } from "./components/WorkbenchPage";
 import {
   defaultConfig,
   getDefaultPaths,
@@ -81,6 +82,9 @@ export default function App() {
       {!isReady && <div className="loading-view">正在加载本地配置...</div>}
       {isReady && activeView === "startup" && (
         <StartupPage onChooseMode={setActiveView} />
+      )}
+      {isReady && activeView === "workbench" && (
+        <WorkbenchPage organizationName={config.settings.organizationName} />
       )}
       {isReady && activeView === "initiator" && (
         <InitiatorPage

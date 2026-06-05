@@ -1,4 +1,9 @@
-export type AppView = "startup" | "initiator" | "receiver" | "settings";
+export type AppView =
+  | "startup"
+  | "workbench"
+  | "initiator"
+  | "receiver"
+  | "settings";
 
 export type CameraRole = "primary" | "secondary";
 

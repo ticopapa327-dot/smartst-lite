@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>SmartST Lite 手机收看</title>
+  </head>
+  <body>
+    <main class="observer-shell">
+      <section class="observer-panel">
+        <header class="observer-header">
+          <div>
+            <span>SmartST Lite</span>
+            <h1>手机收看</h1>
+          </div>
+          <strong id="status-pill">未连接</strong>
+        </header>
+
+        <form class="observer-form" id="observer-form">
+          <label>
+            业务服务
+            <input
+              id="service-url"
+              inputmode="url"
+              autocomplete="off"
+              value="http://127.0.0.1:4780"
+            />
+          </label>
+          <label>
+            房间码
+            <input id="room-code" autocomplete="off" placeholder="ST-20260605-001" />
+          </label>
+          <label>
+            显示名
+            <input id="display-name" autocomplete="name" placeholder="观察端" />
+          </label>
+          <div class="observer-actions">
+            <button id="connect-button" type="submit">进入收看</button>
+            <button id="disconnect-button" type="button" disabled>退出</button>
+          </div>
+        </form>
+
+        <div class="observer-status" id="observer-status">
+          <span class="status-dot"></span>
+          <p>等待房间码。</p>
+        </div>
+      </section>
+
+      <section class="media-panel">
+        <div class="video-frame" id="video-host">
+          <div class="empty-video">远端默认画面</div>
+        </div>
+        <div class="audio-host" id="audio-host"></div>
+        <div class="track-list" id="track-list"></div>
+      </section>
+
+      <section class="policy-panel" id="policy-panel">
+        <div>
+          <span>模式</span>
+          <strong>仅收看</strong>
+        </div>
+        <div>
+          <span>发布权限</span>
+          <strong id="publish-policy">禁止</strong>
+        </div>
+        <div>
+          <span>默认画面</span>
+          <strong id="default-track">待分配</strong>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 import {
   Clapperboard,
+  LayoutDashboard,
   type LucideIcon,
   MonitorPlay,
   RadioTower,
@@ -29,15 +30,21 @@ const navItems: Array<{
     icon: Stethoscope,
   },
   {
+    view: "workbench",
+    label: "手术室工作台",
+    title: "进入 USB-first 手术室工作台",
+    icon: LayoutDashboard,
+  },
+  {
     view: "initiator",
-    label: "发起端",
-    title: "进入示教发起端",
+    label: "历史发起端",
+    title: "进入 0.1.4 ONVIF/RTSP 发起端",
     icon: RadioTower,
   },
   {
     view: "receiver",
-    label: "接收端",
-    title: "进入示教接收端",
+    label: "历史接收端",
+    title: "进入 0.1.4 接收端",
     icon: MonitorPlay,
   },
   {

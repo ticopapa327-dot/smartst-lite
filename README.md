@@ -1,72 +1,114 @@
 # SmartST Lite
 
-SmartST Lite 是一个面向医美医院、动物医院、民营医疗机构的轻量级 Windows 手术示教/手术转播客户端。项目目标是免费、易部署、最多接入 2 路 ONVIF 网络摄像机，并逐步接入 RTSP、FFmpeg、LiveKit/WebRTC。
-
-当前仓库是第一阶段 MVP：桌面客户端外壳、发起端/接收端主要界面、局域网 ONVIF 自动发现、ONVIF GetStreamUri 获取 RTSP 地址、RTSP 本地预览、本地配置持久化、基础日志系统已经实现；远端推流、LiveKit 通话仍是 TODO，不会伪造成功状态。
-
-## 技术架构
-
-- 桌面外壳：Tauri 2 + Rust
-- 前端：React + TypeScript + Vite
-- 本地能力：Tauri command 提供配置读写、日志追加
-- 摄像机服务：ONVIF WS-Discovery 自动发现、GetCapabilities、GetProfiles、GetStreamUri、RTSP 地址管理
-- 实时通话服务：预留 LiveKit/WebRTC 房间、呼叫、加入、挂断状态
-- 本地预览：调用 FFmpeg 拉取 RTSP 并转为本机 HLS，前端通过 hls.js 播放
-- 转码推流：预留 FFmpeg 推流到远端房间
-
-## MVP 功能
-
-- 启动页选择“示教发起端”或“示教接收端”
-- 发起端摄像机列表，最多 2 路摄像机
-- 局域网 ONVIF 自动发现，发现后预填 IP、端口和设备名称
-- 添加/编辑摄像机弹窗，录入 IP、ONVIF 端口、用户名、密码、RTSP 地址
-- 通过 ONVIF GetStreamUri 获取摄像机实际 RTSP 流地址，避免只猜常见路径
-- RTSP 地址显示和主/辅画面本地预览
-- 创建房间、呼叫接收端的本地状态流
-- 接收端录入服务器地址/房间号，等待呼叫、主动加入、挂断
-- 设置页保存服务器地址、机构名称、设备名称、日志目录
-- 配置持久化到 `%APPDATA%\\SmartST Lite\\config.json`
-- 日志追加到 `%APPDATA%\\SmartST Lite\\logs\\smartst-lite.log`
-
-## 未实现但已预留
-
-- TODO: 更完整的 ONVIF HTTP Digest 兼容和更多 Profile 选择策略
-- TODO: FFmpeg 远端转码推流
-- TODO: LiveKit/WebRTC 房间创建、token 签发、接收端信令通知
-- TODO: 麦克风采集、双端语音通话
-- TODO: Windows 目录选择器、摄像机密码加密保存
-
-## 目录结构
+SmartST Lite 是面向 Windows 手术室终端的桌面版手术示教软件项目。新阶段开发主线是：
 
 ```text
-.
-├── src
-│   ├── components        # 页面和 UI 组件
-│   ├── domain            # TypeScript 领域类型
-│   ├── services          # 配置、日志、摄像机、实时通话服务
-│   ├── App.tsx
-│   ├── main.tsx
-│   └── styles.css
-├── src-tauri
-│   ├── src/main.rs       # Tauri 本地命令
-│   ├── Cargo.toml
-│   └── tauri.conf.json
-├── .github/workflows     # GitHub Actions
-├── CONTRIBUTING.md
-├── LICENSE
-├── package.json
-└── README.md
+USB UVC / USB 采集卡优先
+LiveKit / SFU 实时互动
+Native Media Worker 本地采集和录像
+业务服务统一呼叫、权限、token、HIS、文件和审计
+Android 会议平板作为正式客户端
+手机 H5 仅单向收看
+冷灰蓝 HMI 医疗设备控制屏视觉
 ```
+
+当前根 README 是仓库入口。详细开发依据以 [docs/README.md](docs/README.md) 为准；无人值守开发按 [docs/autonomous-development-plan.md](docs/autonomous-development-plan.md) 执行。
+
+## 当前状态
+
+当前代码仍是 `0.1.4` MVP 基线，不是完整 LiveKit 版本，也不是 USB-first 可交付版本。
+
+已实现的历史能力：
+
+- 桌面客户端外壳：Tauri 2 + React + TypeScript + Vite。
+- 发起端/接收端主要界面。
+- 局域网 ONVIF 自动发现。
+- ONVIF GetStreamUri 获取 RTSP 地址。
+- FFmpeg 将 RTSP 转为本地 HLS 预览。
+- 本地配置持久化。
+- 基础日志系统。
+
+已完成的新阶段 PoC：
+
+- USB-first 工作台 UI 骨架。
+- 业务服务 PoC：端点注册、呼叫、房间、mock token、观察端并发限制。
+- LiveKit UI PoC：桌面端手动连接面板、仅收看/交互模式边界、远端 track DOM 挂载。
+- 手机 H5 单向观察 PoC：只获取 `web-observer` 订阅权限，不发布音视频或数据。
+- Media Worker IPC PoC：JSON Lines 控制面、mock 设备、状态、事件、synthetic publisher 状态。
+- USB 设备预检 PoC：ffmpeg DirectShow 枚举和短时打开验证。
+- 录像 manifest 与单路短时录像 PoC。
+
+仍未实现为正式能力：
+
+- USB UVC / USB 采集卡 4 路本地预览。
+- LiveKit 真实 JWT 签发、生产权限模型和端到端发布/订阅。
+- Native Media Worker 正式媒体链路。
+- Android 会议平板客户端。
+- 多通道医疗录像、回放、导出、上传。
+- HIS 患者绑定和录像索引。
+
+## 架构边界
+
+必须遵守：
+
+- USB 采集卡是默认视频输入；ONVIF/RTSP 降级为高级兼容能力。
+- LiveKit 只负责实时房间、音视频转发、权限、Data/RPC 和可选 Egress。
+- Native Media Worker 负责 Windows 本地采集、编码、录像、PTZ、设备恢复。
+- 业务服务负责 token、呼叫、HIS、录像索引、上传和审计。
+- 手机端不安装客户端，只作为 `web-observer` 单向收看。
+- 手机观看并发必须由 LiveKit/SFU 转发，手术室端只发布一次默认画面。
+- Android 会议平板可以安装客户端，是正式示教/会诊终端。
+- UI 必须采用 `or-preview HMI palette v0.3` 冷灰蓝医疗设备控制屏风格。
+
+禁止：
+
+- 客户端硬编码 LiveKit secret。
+- 继续把 ONVIF/RTSP 作为主流程扩展。
+- 让手机端发布音频、视频、标注、PTZ 或控制消息。
+- 让手术室终端为每台手机单独推流或转码。
+- 把 WebView2 `MediaRecorder` 当作正式医疗录像方案。
+- 使用大面积蓝色、紫蓝渐变、霓虹发光、玻璃拟态或 BI 驾驶舱式视觉。
+
+## 文档入口
+
+推荐阅读顺序：
+
+1. [docs/development-readiness.md](docs/development-readiness.md)
+2. [docs/autonomous-development-plan.md](docs/autonomous-development-plan.md)
+3. [docs/livekit-desktop-surgery-teaching-architecture.md](docs/livekit-desktop-surgery-teaching-architecture.md)
+4. [docs/livekit-native-media-worker-service-feasibility.md](docs/livekit-native-media-worker-service-feasibility.md)
+5. [docs/ui-visual-style.md](docs/ui-visual-style.md)
+6. [docs/livekit-desktop-surgery-teaching-development-plan.md](docs/livekit-desktop-surgery-teaching-development-plan.md)
+7. [docs/usb-first-rearchitecture.md](docs/usb-first-rearchitecture.md)
+
+## 无人值守开发
+
+后续自动开发按批次推进：
+
+```text
+AD-00 文档与仓库基线
+AD-01 领域模型与 HMI 视觉 token
+AD-02 工作台 UI 骨架
+AD-03 业务服务 PoC
+AD-04 LiveKit UI PoC
+AD-05 手机 H5 单向观察 PoC
+AD-06 Media Worker IPC 骨架
+AD-07 Media Worker synthetic 发布 PoC
+AD-08 USB 采集验证 PoC
+AD-09 录像 manifest 与单路录像 PoC
+```
+
+每批次状态记录在 [docs/autonomous-progress.md](docs/autonomous-progress.md)。
 
 ## 本地开发
 
 环境要求：
 
-- Windows 10 / Windows 11
-- Node.js 20+
-- Rust stable
-- Tauri 2 所需 Windows 构建工具
-- FFmpeg：用于 RTSP 本地预览；请将 `ffmpeg.exe` 放到 `SmartST Lite.exe` 同目录，或加入系统 `PATH`
+- Windows 10 / Windows 11。
+- Node.js 20+。
+- Rust stable。
+- Tauri 2 所需 Windows 构建工具。
+- FFmpeg：当前历史 RTSP/HLS 预览仍需要；新阶段 Native Media Worker 会重新定义媒体依赖。
 
 安装依赖：
 
@@ -86,116 +128,37 @@ npm run tauri:dev
 npm run dev
 ```
 
-## 本地测试步骤
-
-1. 打开应用，确认首页展示“免费手术示教”“2 路摄像机”“快速转播”“Windows 可用”。
-2. 进入“示教发起端”，点击“自动发现”，确认可扫描局域网 ONVIF 设备；若没有设备，确认提示说明 UDP 3702 / 防火墙排查方向。
-3. 从发现结果选择设备，补充用户名和密码，或手动添加 1 到 2 路摄像机。
-4. 在添加摄像机弹窗点击“获取 RTSP”，确认系统可通过 ONVIF GetStreamUri 获取实际流地址；如果失败，可手动填入 ODM 中显示的 RTSP 地址。
-5. 确认本机可运行 `ffmpeg -version`，或将 `ffmpeg.exe` 放到 EXE 同目录。
-6. 保存摄像机后观察主/辅画面是否开始本地预览；启动预览时不应弹出 FFmpeg 命令行窗口，若失败请查看界面提示的 `ffmpeg-preview-*.log`。
-7. 设置其中一路为主画面，确认主/辅画面标签变化。
-8. 点击“创建房间”，确认生成 `ST-XXXXXX` 房间号。
-9. 点击“呼叫接收端”，确认进入本地呼叫状态且提示 LiveKit/信令 TODO。
-10. 进入“示教接收端”，录入地址和房间号，点击“主动加入”，确认最近连接被保存。
-11. 进入“设置”，修改机构名称、设备名称、日志目录，重启后确认配置仍存在。
-12. 检查 `%APPDATA%\\SmartST Lite\\logs\\smartst-lite.log` 是否写入操作日志。
-
-## Windows 打包
-
 构建前端：
 
 ```powershell
 npm run build
 ```
 
-构建 Windows 安装包：
-
-```powershell
-npm run tauri:build
-```
-
-如果本机首次下载 NSIS/MSI 打包工具超时，可以先只构建可执行文件：
+构建 Windows 可执行文件：
 
 ```powershell
 npm run tauri:build:exe
 ```
 
-产物通常位于：
-
-```text
-src-tauri/target/release/bundle/
-```
-
-`--no-bundle` 模式下的 exe 位于：
-
-```text
-src-tauri/target/release/smartst-lite.exe
-```
-
-正式发布前建议补充：
-
-- 应用图标
-- Windows 代码签名证书
-- 安装包升级策略
-- FFmpeg 二进制授权和分发说明；当前 EXE 不内置 FFmpeg
-- LiveKit 服务端部署说明
-
-## 开源发布到 GitHub
-
-本项目采用 MIT License，适合公开发布。推荐首次发布流程：
+构建安装包：
 
 ```powershell
-git init
-git add .
-git commit -m "Initial SmartST Lite MVP"
-git branch -M main
-git remote add origin https://github.com/<your-org>/smartst-lite.git
-git push -u origin main
+npm run tauri:build
 ```
 
-发布前请确认：
+## 发布与安全
 
-- 不提交真实摄像机密码、医院内部地址、私有 LiveKit token。
-- README 明确当前能力边界和 TODO。
-- 如后续捆绑 FFmpeg，需要核对 FFmpeg 编译选项和许可证兼容性。
+不得提交：
 
-## 后续路线图
+- 真实摄像机密码。
+- 医院内部地址。
+- LiveKit API secret。
+- HIS 凭据。
+- FTP/SFTP/FTPS 密码。
+- 真实患者信息。
+- 真实手术录像。
 
-### 0.2 摄像机接入
-
-- ONVIF GetStreamUri 已初步实现，后续补充更多认证和 Profile 兼容策略
-- 摄像机连通性检测
-- 摄像机密码加密保存
-
-### 0.3 本地视频预览
-
-- FFmpeg 拉取 RTSP（已初步实现）
-- 本地低延迟预览（已初步实现）
-- 断线重连和错误提示
-- 主/辅画面切换优化
-
-### 0.4 远程示教
-
-- LiveKit 房间创建和 token 签发
-- 发起端推流到房间
-- 接收端加入房间播放 1 到 2 路视频
-- 麦克风语音讲解和双端通话
-
-### 0.5 Windows 发布
-
-- 安装包图标和签名
-- 日志导出
-- 简单诊断页
-- 更新检查
-
-### 高级版预留
-
-- 多房间调度
-- 用户和角色权限
-- 病例归档
-- HIS/PACS 对接
-- 集中设备运维
+如后续捆绑 FFmpeg、GStreamer、LiveKit SDK 或其他媒体组件，必须核对许可证、二进制分发和安装包体积。
 
 ## License
 

@@ -3,6 +3,7 @@ node_modules/
 
 # Frontend build output
 dist/
+dist-web-observer-poc/
 
 # Tauri and Rust build output
 src-tauri/target/
@@ -10,6 +11,7 @@ src-tauri/target/
 # Logs and local runtime data
 *.log
 logs/
+runtime/
 
 # Environment and local config
 .env
