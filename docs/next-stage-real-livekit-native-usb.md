@@ -15,7 +15,7 @@
 最近一次完整回归：
 
 - 命令：`npm run test:all:poc`
-- 结果：通过，耗时约 32.7 秒。
+- 结果：通过，耗时约 32.4 秒。
 - 剩余警告：Vite chunk 体积超过 500 kB，需要后续 code split。
 
 ## 2. LiveKit JWT 签发
@@ -115,6 +115,12 @@ boundAudioEndpoints=1
 video[0]=HD Webcam / 1280x720 NV12 30fps / state=native-bound
 video[1]=waiting-for-device / reason=no-native-video-device-for-channel-index
 audio[0]=麦克风阵列 (Senary Audio) / 48000Hz 2ch IEEE_FLOAT / state=native-bound
+status.videoCaptureThread.state=running
+status.videoCaptureThread.sampleCount=3
+status.videoCaptureThread.readCount=4
+status.videoCaptureThread.measuredFps=6.41
+status.videoCaptureThread.streamFlagNames=stream-tick
+status.videoCaptureThread.totalLengthBytes=4147200
 status.audioCaptureThread.state=running
 status.audioCaptureThread.packetCount=45
 status.audioCaptureThread.capturedFrames=21600
@@ -122,7 +128,7 @@ status.audioCaptureThread.capturedBytes=172800
 status.audioCaptureThread.discontinuityPackets=1
 stop.captureSession.state=idle
 stop.stats.realMediaSession=false
-continuousVideoThreads=not-started
+continuousVideoThreads=running
 continuousAudioThreads=running
 ```
 
@@ -130,9 +136,9 @@ continuousAudioThreads=running
 
 - `start/status/stop` 已经可以表达真实 Native Worker 会话状态，不再只是固定 mock channel。
 - 当前设备数量不足时不阻塞启动，缺失通道被标记为 `waiting-for-device`，符合当前“忽略摄像头数量继续开发”的阶段决策。
-- `start` 在绑定 WASAPI 音频端点后默认启动可停止的连续音频统计线程，`status` 可读取 packet/frame/byte 计数。
+- `start` 在绑定 Media Foundation 视频设备和 WASAPI 音频端点后默认启动可停止的连续统计线程，`status` 可读取视频 sample/FPS/byte 计数和音频 packet/frame/byte 计数。
 - `stop` 会清理 `captureSession` 并重置 session 统计，避免 UI/监控误判为仍在真实采集中。
-- 该能力仍不是生产采集：没有连续视频线程、没有帧队列、没有预览纹理、没有 AEC、没有 LiveKit publisher、没有录像写入。
+- 该能力仍不是生产采集：没有帧队列、没有预览纹理、没有 AEC、没有 LiveKit publisher、没有录像写入。
 
 真实设备枚举结果：
 
@@ -234,6 +240,35 @@ transportStatus=not-published
 - 当前 HD Webcam 实测帧率约 9.37fps，低于媒体类型声明的 30fps；按当前决策，该结果只记录为开发机摄像头限制，不作为采集卡路线阻塞。
 - 本次仍未做解码、预览渲染、LiveKit 发布、编码或录像；真实帧 payload 仍留在 native 侧，JSON Lines 只返回统计。
 - `stream-tick` 在本机连续读取中出现，后续长时间采集统计需要保留该 flag 计数，不能只看 sample 数。
+
+Session 内可停止视频统计线程：
+
+```powershell
+npm run media-worker:native:session
+```
+
+本机结果：
+
+```text
+测试时间：2026-06-06
+holdMs=500
+videoCaptureThread.state=running
+videoCaptureThread.channelId=field-camera
+videoCaptureThread.device=HD Webcam
+videoCaptureThread.mediaType=1280x720 NV12 30fps
+videoCaptureThread.sampleCount=3
+videoCaptureThread.readCount=4
+videoCaptureThread.measuredFps=6.41
+videoCaptureThread.mediaTimelineFps=13.91
+videoCaptureThread.totalLengthBytes=4147200
+videoCaptureThread.streamFlagNames=stream-tick
+stop.join=ok
+```
+
+边界：
+
+- 当前只启动第一路已绑定视频通道的统计线程，尚未做多路视频线程管理。
+- 线程只统计样本和时间线，不传输帧 payload，不做帧队列、预览纹理、编码或录像。
 
 WASAPI 阶段复测时的当前设备状态：
 

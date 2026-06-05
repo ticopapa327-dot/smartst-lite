@@ -10,12 +10,12 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
   - Video: Media Foundation device source enumeration.
   - Audio capture: WASAPI/Core Audio endpoint enumeration.
 - Mock fallback is still available when native enumeration fails.
-- Channel `start`/`stop`/`status` now exposes a native capture session skeleton with device binding metadata and a stoppable WASAPI audio statistics thread.
+- Channel `start`/`stop`/`status` now exposes a native capture session skeleton with device binding metadata plus stoppable Media Foundation video and WASAPI audio statistics threads.
 - `captureVideoSample` verifies a single Media Foundation sample read only.
 - `measureVideoFrames` runs a short Media Foundation SourceReader loop and returns frame-rate statistics only.
 - `probeAudioFormat` reads WASAPI mix format for capture endpoints.
 - `captureAudioBuffer` verifies short WASAPI capture buffer access and returns packet/frame statistics only.
-- No continuous video thread, AEC processing, LiveKit native publishing, or real recording yet.
+- No frame queue, preview renderer, AEC processing, LiveKit native publishing, or real recording yet.
 
 ## Run
 
@@ -116,4 +116,4 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 
 `captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
 
-`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` also starts a WASAPI audio statistics thread by default when an audio endpoint is bound; pass `startAudioThread=false` to keep it disabled. Continuous video threads are still not started by `start`.
+`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video statistics thread and one WASAPI audio statistics thread by default when matching devices are bound; pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled.

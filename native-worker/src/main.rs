@@ -49,6 +49,7 @@ struct WorkerState {
     recording: Value,
     livekit: Value,
     stats: Value,
+    video_runtime: Option<VideoCaptureRuntime>,
     audio_runtime: Option<AudioCaptureRuntime>,
     last_error: Option<Value>,
 }
@@ -85,6 +86,12 @@ struct AudioCaptureRuntime {
     handle: Option<JoinHandle<()>>,
 }
 
+struct VideoCaptureRuntime {
+    stop: Arc<AtomicBool>,
+    stats: Arc<Mutex<VideoCaptureThreadStats>>,
+    handle: Option<JoinHandle<()>>,
+}
+
 #[derive(Clone)]
 struct AudioCaptureThreadStats {
     state: String,
@@ -109,6 +116,34 @@ struct AudioCaptureThreadStats {
     last_error: Option<String>,
 }
 
+#[derive(Clone)]
+struct VideoCaptureThreadStats {
+    state: String,
+    started_at: String,
+    stopped_at: Option<String>,
+    elapsed_ms: u128,
+    channel_id: String,
+    device_index: u32,
+    media_type_index: u32,
+    read_count: u64,
+    sample_count: u64,
+    empty_read_count: u64,
+    total_length_bytes: u64,
+    total_buffer_count: u64,
+    stream_flags_or: u32,
+    media_type_changed_count: u64,
+    native_media_type_changed_count: u64,
+    first_timestamp_hns: Option<i64>,
+    last_timestamp_hns: Option<i64>,
+    first_sample_time_hns: Option<i64>,
+    last_sample_time_hns: Option<i64>,
+    sample_duration_sum_hns: i128,
+    sample_duration_count: u64,
+    device: Value,
+    media_type: Value,
+    last_error: Option<String>,
+}
+
 impl WorkerState {
     fn new() -> Self {
         Self {
@@ -122,13 +157,18 @@ impl WorkerState {
             recording: idle_recording(),
             livekit: idle_livekit(),
             stats: idle_stats(),
+            video_runtime: None,
             audio_runtime: None,
             last_error: None,
         }
     }
 
     fn snapshot(&self) -> Value {
-        let stats = stats_with_audio_runtime(&self.stats, self.audio_runtime.as_ref());
+        let stats = stats_with_runtimes(
+            &self.stats,
+            self.audio_runtime.as_ref(),
+            self.video_runtime.as_ref(),
+        );
         json!({
             "processId": self.process_id,
             "workerVersion": self.worker_version,
@@ -276,6 +316,18 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = session_start.stats;
+    if let Some((channel_id, video_index)) = video_thread_start_target(&state.channels, &params) {
+        let media_type_index = state.capture_session["videoMediaTypeIndex"]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0);
+        state.video_runtime = Some(start_video_capture_runtime(
+            channel_id,
+            video_index,
+            media_type_index,
+        ));
+        state.capture_session["continuousVideoThreads"] = json!("running");
+    }
     if should_start_audio_thread(&params, &state.capture_session) {
         let audio_index = state.capture_session["audioIndex"]
             .as_u64()
@@ -292,6 +344,9 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
 
     emit_event("device", "snapshot", session_start.device_snapshot);
     emit_event("capture", "session-started", state.capture_session.clone());
+    if let Some(video_runtime) = state.video_runtime.as_ref() {
+        emit_event("video", "capture-thread-started", video_runtime.snapshot());
+    }
     if let Some(audio_runtime) = state.audio_runtime.as_ref() {
         emit_event("audio", "capture-thread-started", audio_runtime.snapshot());
     }
@@ -320,6 +375,7 @@ fn stop_worker(state: &mut WorkerState) -> Value {
         );
     }
 
+    let video_thread_stopped = stop_video_capture_runtime(state);
     let audio_thread_stopped = stop_audio_capture_runtime(state);
     let previous_session = state.capture_session.clone();
     state.state = "idle".to_string();
@@ -329,6 +385,9 @@ fn stop_worker(state: &mut WorkerState) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = idle_stats();
+    if let Some(video_stats) = video_thread_stopped {
+        emit_event("video", "capture-thread-stopped", video_stats);
+    }
     if let Some(audio_stats) = audio_thread_stopped {
         emit_event("audio", "capture-thread-stopped", audio_stats);
     }
@@ -681,6 +740,281 @@ fn mock_capture_session_start(
     }
 }
 
+fn video_thread_start_target(channels: &[Value], params: &Value) -> Option<(String, u32)> {
+    let enabled = params
+        .get("startVideoThread")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if !enabled {
+        return None;
+    }
+    channels.iter().find_map(|channel| {
+        if channel.get("source").and_then(Value::as_str) != Some("windows-native") {
+            return None;
+        }
+        let channel_id = channel.get("channelId")?.as_str()?.to_string();
+        let priority = channel.get("priority")?.as_u64()?;
+        let video_index = u32::try_from(priority.saturating_sub(1)).ok()?;
+        Some((channel_id, video_index))
+    })
+}
+
+fn start_video_capture_runtime(
+    channel_id: String,
+    video_index: u32,
+    media_type_index: u32,
+) -> VideoCaptureRuntime {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stats = Arc::new(Mutex::new(VideoCaptureThreadStats::new(
+        channel_id.clone(),
+        video_index,
+        media_type_index,
+    )));
+    let thread_stop = Arc::clone(&stop);
+    let thread_stats = Arc::clone(&stats);
+    let handle = thread::spawn(move || {
+        run_video_capture_thread(
+            channel_id,
+            video_index,
+            media_type_index,
+            thread_stop,
+            thread_stats,
+        );
+    });
+    VideoCaptureRuntime {
+        stop,
+        stats,
+        handle: Some(handle),
+    }
+}
+
+fn stop_video_capture_runtime(state: &mut WorkerState) -> Option<Value> {
+    let mut runtime = state.video_runtime.take()?;
+    runtime.stop.store(true, Ordering::SeqCst);
+    if let Some(handle) = runtime.handle.take() {
+        if handle.join().is_err() {
+            runtime.update(|stats| {
+                stats.state = "failed".to_string();
+                stats.stopped_at = Some(now_iso_like());
+                stats.last_error = Some("video capture thread panicked".to_string());
+            });
+        }
+    }
+    Some(runtime.snapshot())
+}
+
+fn run_video_capture_thread(
+    _channel_id: String,
+    video_index: u32,
+    media_type_index: u32,
+    stop: Arc<AtomicBool>,
+    stats: Arc<Mutex<VideoCaptureThreadStats>>,
+) {
+    let started = Instant::now();
+    update_video_stats(&stats, |stats| {
+        stats.state = "initializing".to_string();
+    });
+    let result = (|| {
+        let _com = ComApartment::initialize()?;
+        with_video_device_activates(|records| {
+            let record = records
+                .iter()
+                .find(|record| record.index == video_index)
+                .ok_or_else(|| format!("Video index not found: {video_index}"))?;
+            let source: IMFMediaSource = unsafe {
+                record
+                    .activate
+                    .ActivateObject()
+                    .map_err(format_windows_error)?
+            };
+            let result = (|| {
+                let reader = unsafe {
+                    MFCreateSourceReaderFromMediaSource(&source, None::<&IMFAttributes>)
+                        .map_err(format_windows_error)?
+                };
+                let media_type = unsafe {
+                    reader
+                        .GetNativeMediaType(video_stream_index(), media_type_index)
+                        .map_err(format_windows_error)?
+                };
+                unsafe {
+                    reader
+                        .SetCurrentMediaType(video_stream_index(), None, &media_type)
+                        .map_err(format_windows_error)?;
+                }
+                let media_type_json = media_type_to_json(&media_type, media_type_index);
+                update_video_stats(&stats, |stats| {
+                    stats.state = "running".to_string();
+                    stats.elapsed_ms = started.elapsed().as_millis();
+                    stats.device = video_device_record_to_json(record);
+                    stats.media_type = media_type_json.clone();
+                });
+
+                while !stop.load(Ordering::SeqCst) {
+                    let mut actual_stream_index = 0u32;
+                    let mut stream_flags = 0u32;
+                    let mut timestamp_hns = 0i64;
+                    let mut sample = None;
+                    unsafe {
+                        reader
+                            .ReadSample(
+                                video_stream_index(),
+                                0,
+                                Some(&mut actual_stream_index),
+                                Some(&mut stream_flags),
+                                Some(&mut timestamp_hns),
+                                Some(&mut sample),
+                            )
+                            .map_err(format_windows_error)?;
+                    }
+                    if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_ERROR.0) {
+                        return Err(format!(
+                            "SourceReader reported error flag while running video thread. flags={stream_flags}"
+                        ));
+                    }
+                    if has_source_reader_flag(stream_flags, MF_SOURCE_READERF_ENDOFSTREAM.0) {
+                        return Err(format!(
+                            "SourceReader reached end of stream while running video thread"
+                        ));
+                    }
+                    update_video_stats(&stats, |stats| {
+                        stats.read_count = stats.read_count.saturating_add(1);
+                        stats.stream_flags_or |= stream_flags;
+                        if has_source_reader_flag(
+                            stream_flags,
+                            MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0,
+                        ) {
+                            stats.media_type_changed_count =
+                                stats.media_type_changed_count.saturating_add(1);
+                        }
+                        if has_source_reader_flag(
+                            stream_flags,
+                            MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED.0,
+                        ) {
+                            stats.native_media_type_changed_count =
+                                stats.native_media_type_changed_count.saturating_add(1);
+                        }
+                        stats.elapsed_ms = started.elapsed().as_millis();
+                    });
+
+                    if let Some(sample) = sample {
+                        update_video_stats(&stats, |stats| {
+                            stats.sample_count = stats.sample_count.saturating_add(1);
+                            stats.first_timestamp_hns.get_or_insert(timestamp_hns);
+                            stats.last_timestamp_hns = Some(timestamp_hns);
+                            if let Ok(total_length) = unsafe { sample.GetTotalLength() } {
+                                stats.total_length_bytes = stats
+                                    .total_length_bytes
+                                    .saturating_add(u64::from(total_length));
+                            }
+                            if let Ok(buffer_count) = unsafe { sample.GetBufferCount() } {
+                                stats.total_buffer_count = stats
+                                    .total_buffer_count
+                                    .saturating_add(u64::from(buffer_count));
+                            }
+                            if let Ok(sample_time_hns) = unsafe { sample.GetSampleTime() } {
+                                stats.first_sample_time_hns.get_or_insert(sample_time_hns);
+                                stats.last_sample_time_hns = Some(sample_time_hns);
+                            }
+                            if let Ok(sample_duration_hns) = unsafe { sample.GetSampleDuration() } {
+                                stats.sample_duration_sum_hns += i128::from(sample_duration_hns);
+                                stats.sample_duration_count =
+                                    stats.sample_duration_count.saturating_add(1);
+                            }
+                            stats.elapsed_ms = started.elapsed().as_millis();
+                        });
+                    } else {
+                        update_video_stats(&stats, |stats| {
+                            stats.empty_read_count = stats.empty_read_count.saturating_add(1);
+                            stats.elapsed_ms = started.elapsed().as_millis();
+                        });
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                }
+                Ok::<(), String>(())
+            })();
+            shutdown_media_source(&source, &record.activate);
+            result
+        })
+    })();
+
+    match result {
+        Ok(()) => {
+            update_video_stats(&stats, |stats| {
+                stats.state = "stopped".to_string();
+                stats.stopped_at = Some(now_iso_like());
+                stats.elapsed_ms = started.elapsed().as_millis();
+            });
+        }
+        Err(error) => {
+            update_video_stats(&stats, |stats| {
+                stats.state = "failed".to_string();
+                stats.stopped_at = Some(now_iso_like());
+                stats.elapsed_ms = started.elapsed().as_millis();
+                stats.last_error = Some(error);
+            });
+        }
+    }
+}
+
+fn update_video_stats(
+    stats: &Arc<Mutex<VideoCaptureThreadStats>>,
+    update: impl FnOnce(&mut VideoCaptureThreadStats),
+) {
+    if let Ok(mut stats) = stats.lock() {
+        update(&mut stats);
+    }
+}
+
+impl VideoCaptureRuntime {
+    fn snapshot(&self) -> Value {
+        self.stats
+            .lock()
+            .map(|stats| video_capture_thread_stats_to_json(&stats))
+            .unwrap_or_else(|_| {
+                json!({
+                    "state": "failed",
+                    "lastError": "video capture stats lock poisoned"
+                })
+            })
+    }
+
+    fn update(&self, update: impl FnOnce(&mut VideoCaptureThreadStats)) {
+        update_video_stats(&self.stats, update);
+    }
+}
+
+impl VideoCaptureThreadStats {
+    fn new(channel_id: String, device_index: u32, media_type_index: u32) -> Self {
+        Self {
+            state: "starting".to_string(),
+            started_at: now_iso_like(),
+            stopped_at: None,
+            elapsed_ms: 0,
+            channel_id,
+            device_index,
+            media_type_index,
+            read_count: 0,
+            sample_count: 0,
+            empty_read_count: 0,
+            total_length_bytes: 0,
+            total_buffer_count: 0,
+            stream_flags_or: 0,
+            media_type_changed_count: 0,
+            native_media_type_changed_count: 0,
+            first_timestamp_hns: None,
+            last_timestamp_hns: None,
+            first_sample_time_hns: None,
+            last_sample_time_hns: None,
+            sample_duration_sum_hns: 0,
+            sample_duration_count: 0,
+            device: Value::Null,
+            media_type: Value::Null,
+            last_error: None,
+        }
+    }
+}
+
 fn should_start_audio_thread(params: &Value, capture_session: &Value) -> bool {
     let enabled = params
         .get("startAudioThread")
@@ -940,9 +1274,13 @@ impl AudioCaptureThreadStats {
     }
 }
 
-fn stats_with_audio_runtime(base_stats: &Value, runtime: Option<&AudioCaptureRuntime>) -> Value {
+fn stats_with_runtimes(
+    base_stats: &Value,
+    audio_runtime: Option<&AudioCaptureRuntime>,
+    video_runtime: Option<&VideoCaptureRuntime>,
+) -> Value {
     let mut stats = base_stats.clone();
-    if let Some(runtime) = runtime {
+    if let Some(runtime) = audio_runtime {
         let audio_stats = runtime.snapshot();
         stats["audioCaptureThread"] = audio_stats.clone();
         stats["audioPacketsProduced"] = audio_stats
@@ -955,6 +1293,18 @@ fn stats_with_audio_runtime(base_stats: &Value, runtime: Option<&AudioCaptureRun
             .unwrap_or_else(|| json!(0));
         stats["audioBytesCaptured"] = audio_stats
             .get("capturedBytes")
+            .cloned()
+            .unwrap_or_else(|| json!(0));
+    }
+    if let Some(runtime) = video_runtime {
+        let video_stats = runtime.snapshot();
+        stats["videoCaptureThread"] = video_stats.clone();
+        stats["framesProduced"] = video_stats
+            .get("sampleCount")
+            .cloned()
+            .unwrap_or_else(|| json!(0));
+        stats["videoBytesCaptured"] = video_stats
+            .get("totalLengthBytes")
             .cloned()
             .unwrap_or_else(|| json!(0));
     }
@@ -982,6 +1332,66 @@ fn audio_capture_thread_stats_to_json(stats: &AudioCaptureThreadStats) -> Value 
         "streamLatencyHns": stats.stream_latency_hns,
         "device": stats.device,
         "mixFormat": stats.mix_format,
+        "lastError": stats.last_error
+    })
+}
+
+fn video_capture_thread_stats_to_json(stats: &VideoCaptureThreadStats) -> Value {
+    let measured_fps = if stats.elapsed_ms > 0 {
+        Some(stats.sample_count as f64 * 1000.0 / stats.elapsed_ms as f64)
+    } else {
+        None
+    };
+    let measured_bytes_per_second = if stats.elapsed_ms > 0 {
+        Some(stats.total_length_bytes as f64 * 1000.0 / stats.elapsed_ms as f64)
+    } else {
+        None
+    };
+    let average_sample_duration_hns = if stats.sample_duration_count > 0 {
+        Some((stats.sample_duration_sum_hns / i128::from(stats.sample_duration_count)) as i64)
+    } else {
+        None
+    };
+    let frame_rate_from_duration = average_sample_duration_hns
+        .filter(|duration| *duration > 0)
+        .map(|duration| 10_000_000.0 / duration as f64);
+    let media_time_span_hns = stats
+        .first_sample_time_hns
+        .zip(stats.last_sample_time_hns)
+        .and_then(|(first, last)| last.checked_sub(first));
+    let media_timeline_fps = media_time_span_hns
+        .filter(|span| *span > 0 && stats.sample_count > 1)
+        .map(|span| (stats.sample_count - 1) as f64 * 10_000_000.0 / span as f64);
+
+    json!({
+        "state": stats.state,
+        "startedAt": stats.started_at,
+        "stoppedAt": stats.stopped_at,
+        "elapsedMs": stats.elapsed_ms,
+        "channelId": stats.channel_id,
+        "deviceIndex": stats.device_index,
+        "mediaTypeIndex": stats.media_type_index,
+        "readCount": stats.read_count,
+        "sampleCount": stats.sample_count,
+        "emptyReadCount": stats.empty_read_count,
+        "measuredFps": measured_fps,
+        "mediaTimelineFps": media_timeline_fps,
+        "measuredBytesPerSecond": measured_bytes_per_second,
+        "totalLengthBytes": stats.total_length_bytes,
+        "totalBufferCount": stats.total_buffer_count,
+        "averageSampleDurationHns": average_sample_duration_hns,
+        "frameRateFromSampleDuration": frame_rate_from_duration,
+        "firstTimestampHns": stats.first_timestamp_hns,
+        "lastTimestampHns": stats.last_timestamp_hns,
+        "firstSampleTimeHns": stats.first_sample_time_hns,
+        "lastSampleTimeHns": stats.last_sample_time_hns,
+        "mediaTimeSpanHns": media_time_span_hns,
+        "streamFlagsOr": stats.stream_flags_or,
+        "streamFlagNames": source_reader_flag_names(stats.stream_flags_or),
+        "mediaTypeChangedCount": stats.media_type_changed_count,
+        "nativeMediaTypeChangedCount": stats.native_media_type_changed_count,
+        "device": stats.device,
+        "mediaType": stats.media_type,
         "lastError": stats.last_error
     })
 }

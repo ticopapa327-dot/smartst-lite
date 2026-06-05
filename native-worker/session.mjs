@@ -67,6 +67,7 @@ try {
     channels,
     videoMediaTypeIndex,
     audioIndex,
+    startVideoThread: true,
     startAudioThread: true,
   });
   await new Promise((resolve) => setTimeout(resolve, holdMs));
