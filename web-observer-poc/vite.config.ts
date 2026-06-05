@@ -7,6 +7,7 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: rootDir,
   build: {
+    chunkSizeWarningLimit: 600,
     emptyOutDir: true,
     outDir: resolve(rootDir, "../dist-web-observer-poc"),
   },

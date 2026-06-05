@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import Hls from "hls.js";
 import { AlertCircle, Loader2, Maximize2, Radio, Star } from "lucide-react";
 import type { CameraConfig } from "../domain/types";
 import {
@@ -22,6 +21,7 @@ type PreviewState =
   | { status: "starting"; message: string }
   | ({ status: "ready" | "playing"; message: string } & RtspPreviewSession)
   | { status: "error"; message: string; logPath?: string };
+type HlsInstance = InstanceType<typeof import("hls.js").default>;
 
 export function VideoPane({
   title,
@@ -94,7 +94,8 @@ export function VideoPane({
       return undefined;
     }
 
-    let hls: Hls | undefined;
+    let hls: HlsInstance | undefined;
+    let disposed = false;
     setPlaybackError("");
 
     const markPlaying = () => {
@@ -118,29 +119,35 @@ export function VideoPane({
         });
     };
 
-    if (Hls.isSupported()) {
-      hls = new Hls({
-        lowLatencyMode: true,
-        backBufferLength: 20,
-        maxBufferLength: 8,
-      });
-      hls.loadSource(playbackUrl);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          setPlaybackError("HLS 预览播放失败，请检查 RTSP 流或 FFmpeg 日志。");
-          hls?.destroy();
-        }
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = playbackUrl;
       video.addEventListener("loadedmetadata", startPlayback, { once: true });
     } else {
-      setPlaybackError("当前 WebView 不支持 HLS 播放。");
+      void import("hls.js").then(({ default: Hls }) => {
+        if (disposed) return;
+        if (!Hls.isSupported()) {
+          setPlaybackError("当前 WebView 不支持 HLS 播放。");
+          return;
+        }
+        hls = new Hls({
+          lowLatencyMode: true,
+          backBufferLength: 20,
+          maxBufferLength: 8,
+        });
+        hls.loadSource(playbackUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            setPlaybackError("HLS 预览播放失败，请检查 RTSP 流或 FFmpeg 日志。");
+            hls?.destroy();
+          }
+        });
+      });
     }
 
     return () => {
+      disposed = true;
       hls?.destroy();
       video.pause();
       video.removeAttribute("src");

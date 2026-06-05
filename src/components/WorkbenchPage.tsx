@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import type { VideoChannel } from "../domain/mediaTypes";
 import {
@@ -7,7 +7,6 @@ import {
 } from "../services/nativeWorkerService";
 import { CallPanel } from "./CallPanel";
 import { ChannelGrid } from "./ChannelGrid";
-import { LiveKitPocPanel } from "./LiveKitPocPanel";
 import { NativeWorkerPanel } from "./NativeWorkerPanel";
 import { RecordingPanel } from "./RecordingPanel";
 
@@ -78,6 +77,12 @@ const defaultChannels: VideoChannel[] = [
   },
 ];
 
+const LiveKitPocPanel = lazy(() =>
+  import("./LiveKitPocPanel").then((module) => ({
+    default: module.LiveKitPocPanel,
+  })),
+);
+
 export function WorkbenchPage({ organizationName }: WorkbenchPageProps) {
   const [nativeReadiness, setNativeReadiness] =
     useState<NativeWorkerReadiness | null>(null);
@@ -128,11 +133,27 @@ export function WorkbenchPage({ organizationName }: WorkbenchPageProps) {
 
       <div className="workbench-two-column">
         <CallPanel defaultChannel={defaultChannel} />
-        <LiveKitPocPanel />
+        <Suspense fallback={<LiveKitPocPanelFallback />}>
+          <LiveKitPocPanel />
+        </Suspense>
         <NativeWorkerPanel />
         <RecordingPanel channels={defaultChannels} />
       </div>
     </div>
+  );
+}
+
+function LiveKitPocPanelFallback() {
+  return (
+    <section className="hmi-panel livekit-poc-panel">
+      <div className="hmi-section-heading">
+        <div>
+          <span>LiveKit PoC</span>
+          <h2>加载中</h2>
+        </div>
+        <strong>Loading</strong>
+      </div>
+    </section>
   );
 }
 
