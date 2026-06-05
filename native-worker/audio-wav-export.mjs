@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assert, parseWavHeader } from "./export-artifact-utils.mjs";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
@@ -144,27 +145,6 @@ try {
   child.kill();
 }
 
-function parseWavHeader(bytes) {
-  assert(bytes.length >= 44, "audio WAV output is at least 44 bytes");
-  assert(bytes.toString("ascii", 0, 4) === "RIFF", "audio WAV output has RIFF header");
-  assert(bytes.toString("ascii", 8, 12) === "WAVE", "audio WAV output has WAVE header");
-  assert(bytes.toString("ascii", 12, 16) === "fmt ", "audio WAV output has fmt chunk");
-  assert(bytes.toString("ascii", 36, 40) === "data", "audio WAV output has data chunk");
-  const dataBytes = bytes.readUInt32LE(40);
-  const riffBytes = bytes.readUInt32LE(4);
-  return {
-    audioFormat: bytes.readUInt16LE(20),
-    channels: bytes.readUInt16LE(22),
-    samplesPerSec: bytes.readUInt32LE(24),
-    avgBytesPerSec: bytes.readUInt32LE(28),
-    blockAlign: bytes.readUInt16LE(32),
-    bitsPerSample: bytes.readUInt16LE(34),
-    dataBytes,
-    riffBytes,
-    fileBytes: dataBytes + 44,
-  };
-}
-
 function request(method, params, timeoutMs = 30000) {
   const id = `${method}-${Date.now()}-${Math.random()}`;
   const result = new Promise((resolvePromise, rejectPromise) => {
@@ -215,10 +195,4 @@ function readIntegerEnv(name, fallback) {
     throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
-}
-
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
 }

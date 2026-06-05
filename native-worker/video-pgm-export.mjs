@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assert, parsePgm } from "./export-artifact-utils.mjs";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
@@ -148,46 +149,6 @@ try {
   child.kill();
 }
 
-function parsePgm(bytes) {
-  assert(bytes.toString("ascii", 0, 3) === "P5\n", "video PGM output has P5 header");
-  const secondNewline = bytes.indexOf(0x0a, 3);
-  assert(secondNewline > 3, "video PGM output has size line");
-  const thirdNewline = bytes.indexOf(0x0a, secondNewline + 1);
-  assert(thirdNewline > secondNewline, "video PGM output has max value line");
-  const [widthText, heightText] = bytes.toString("ascii", 3, secondNewline).split(" ");
-  const width = Number.parseInt(widthText, 10);
-  const height = Number.parseInt(heightText, 10);
-  const maxValue = Number.parseInt(bytes.toString("ascii", secondNewline + 1, thirdNewline), 10);
-  assert(Number.isInteger(width) && width > 0, "video PGM width is valid");
-  assert(Number.isInteger(height) && height > 0, "video PGM height is valid");
-  assert(maxValue === 255, "video PGM max value is 255");
-  const pixelOffset = thirdNewline + 1;
-  const pixelBytes = width * height;
-  assert(bytes.length === pixelOffset + pixelBytes, "video PGM pixel data size matches dimensions");
-  let min = 255;
-  let max = 0;
-  let sum = 0;
-  for (let index = pixelOffset; index < bytes.length; index += 1) {
-    const value = bytes[index];
-    if (value < min) min = value;
-    if (value > max) max = value;
-    sum += value;
-  }
-  return {
-    width,
-    height,
-    maxValue,
-    pixelBytes,
-    headerBytes: pixelOffset,
-    fileBytes: bytes.length,
-    luma: {
-      min,
-      max,
-      average: sum / pixelBytes,
-    },
-  };
-}
-
 function request(method, params, timeoutMs = 30000) {
   const id = `${method}-${Date.now()}-${Math.random()}`;
   const result = new Promise((resolvePromise, rejectPromise) => {
@@ -244,10 +205,4 @@ function readIntegerEnv(name, fallback) {
     throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
-}
-
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
 }

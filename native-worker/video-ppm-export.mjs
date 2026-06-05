@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assert, parsePpm } from "./export-artifact-utils.mjs";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
@@ -148,59 +149,6 @@ try {
   child.kill();
 }
 
-function parsePpm(bytes) {
-  assert(bytes.toString("ascii", 0, 3) === "P6\n", "video PPM output has P6 header");
-  const secondNewline = bytes.indexOf(0x0a, 3);
-  assert(secondNewline > 3, "video PPM output has size line");
-  const thirdNewline = bytes.indexOf(0x0a, secondNewline + 1);
-  assert(thirdNewline > secondNewline, "video PPM output has max value line");
-  const [widthText, heightText] = bytes.toString("ascii", 3, secondNewline).split(" ");
-  const width = Number.parseInt(widthText, 10);
-  const height = Number.parseInt(heightText, 10);
-  const maxValue = Number.parseInt(bytes.toString("ascii", secondNewline + 1, thirdNewline), 10);
-  assert(Number.isInteger(width) && width > 0, "video PPM width is valid");
-  assert(Number.isInteger(height) && height > 0, "video PPM height is valid");
-  assert(maxValue === 255, "video PPM max value is 255");
-  const pixelOffset = thirdNewline + 1;
-  const pixelBytes = width * height * 3;
-  assert(bytes.length === pixelOffset + pixelBytes, "video PPM pixel data size matches dimensions");
-  const rgb = [
-    { min: 255, max: 0, sum: 0 },
-    { min: 255, max: 0, sum: 0 },
-    { min: 255, max: 0, sum: 0 },
-  ];
-  for (let index = pixelOffset; index < bytes.length; index += 3) {
-    for (let channel = 0; channel < 3; channel += 1) {
-      const value = bytes[index + channel];
-      if (value < rgb[channel].min) rgb[channel].min = value;
-      if (value > rgb[channel].max) rgb[channel].max = value;
-      rgb[channel].sum += value;
-    }
-  }
-  const pixels = width * height;
-  return {
-    width,
-    height,
-    maxValue,
-    pixelBytes,
-    headerBytes: pixelOffset,
-    fileBytes: bytes.length,
-    rgb: {
-      r: summarizeChannel(rgb[0], pixels),
-      g: summarizeChannel(rgb[1], pixels),
-      b: summarizeChannel(rgb[2], pixels),
-    },
-  };
-}
-
-function summarizeChannel(channel, pixels) {
-  return {
-    min: channel.min,
-    max: channel.max,
-    average: channel.sum / pixels,
-  };
-}
-
 function request(method, params, timeoutMs = 30000) {
   const id = `${method}-${Date.now()}-${Math.random()}`;
   const result = new Promise((resolvePromise, rejectPromise) => {
@@ -257,10 +205,4 @@ function readIntegerEnv(name, fallback) {
     throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
-}
-
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
 }
