@@ -512,6 +512,13 @@ session-backpressure.audio.maxDepth=50
 session-backpressure.audio.dropCountEnd=251
 session-backpressure.audio.maxBytes=192000
 session-backpressure.consumerStatus=not-attached
+periodic-drain.consumeVideoEveryMs=1000
+periodic-drain.consumeAudioEveryMs=1000
+periodic-drain.consumeEventCount=6
+periodic-drain.video.consumeCountEnd=6
+periodic-drain.video.maxDepth=3
+periodic-drain.audio.consumeCountEnd=15
+periodic-drain.audio.maxDepth=50
 ```
 
 边界：
@@ -520,6 +527,7 @@ session-backpressure.consumerStatus=not-attached
 - `consumeAudioPayloadQueue` 只返回 `consumedPackets`、`consumedBytes`、`remainingDepth`、`latestSequence` 等统计，不返回 PCM payload；后续消费者必须仍保持 native-side 传递，不得把 PCM payload 通过 JSON Lines 返回。
 - `media-worker:native:audio-profile` 只按间隔读取 status 并汇总 RMS/peak、packet/discontinuity/timestamp/payload queue 统计；它是静音/讲话/外接全向麦对比基线工具，不是 AEC 或音质验收。
 - `media-worker:native:session-backpressure` 验证视频/音频 native payload queue 深度不超过配置容量，并记录无消费者时的 drop 计数；该结果证明内存有界，不证明丢帧或丢包在生产质量上可接受。
+- 使用 `SMARTST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS=1000` 和 `SMARTST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS=1000` 可以模拟低频消费者；当前结果只证明 consume 控制链路可周期执行，不代表预览、发布或录像消费者已经达到生产消费速率。
 - 当前音量数值只代表本机测试环境输入电平，不作为验收阈值；后续需要增加静音、讲话声和外接全向麦的对比样本。
 - `stop` 会设置停止标志并 join 线程；`shutdown` 在 worker 仍运行时也会先清理会话。
 
@@ -575,7 +583,7 @@ npm run build
 npm run test:all:poc
 ```
 
-结果：均通过；`cargo test` 当前覆盖 5 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run media-worker:native:audio-payload-consume` 验证 1000ms 内 94-95 个 PCM packet copy 后手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`exportedOverJson=false`；`npm run media-worker:native:audio-profile` 验证 2 秒内 4 次 status 采样，packet 增长 153-154、RMS/peak 可读、payload copy error 为 0；`npm run media-worker:native:session-backpressure` 验证 3 秒无消费者场景下视频队列 `maxDepth=3`、音频队列 `maxDepth=50` 且 drop 计数增长；`npm run test:all:poc` 完整回归耗时约 42.4 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
+结果：均通过；`cargo test` 当前覆盖 5 个 Tauri Native Worker helper 单元测试；native payload queue 阶段 `npm run media-worker:native:session` 验证 500ms 内 3 帧视频 payload copy，`npm run media-worker:native:payload-consume` 验证 1000ms 内 8 帧视频 copy 后手动 drain 2 帧，`consumedBytes=2764800`、`remainingDepth=1`、`exportedOverJson=false`；WASAPI audio payload queue 阶段 `npm run media-worker:native:smoke` 和 `npm run media-worker:native:session-stress` 验证 3 轮重复启停，音频 packet copy 数等于 packet 数、`audioPayloadCopyErrorCount=0`、`audioPayloadQueueBytes=192000`；`npm run media-worker:native:audio-payload-consume` 验证 1000ms 内 94-95 个 PCM packet copy 后手动 drain 5 个 packet，`consumedBytes=19200`、`remainingDepth=45`、`exportedOverJson=false`；`npm run media-worker:native:audio-profile` 验证 2 秒内 4 次 status 采样，packet 增长 153-154、RMS/peak 可读、payload copy error 为 0；`npm run media-worker:native:session-backpressure` 验证 3 秒无消费者场景下视频队列 `maxDepth=3`、音频队列 `maxDepth=50` 且 drop 计数增长；周期性 1000ms drain 场景验证 3 秒内 6 次 consume event，视频 consume 6 帧、音频 consume 15 个 packet 且队列仍有界；`npm run test:all:poc` 完整回归耗时约 42.4 秒；`npm run build` 仍有 Vite chunk 体积超过 500 kB 警告。
 
 ## 7. 4 路 USB 验证
 

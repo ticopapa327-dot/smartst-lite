@@ -303,6 +303,7 @@
   - audio profile 阶段复测 `npm run test:all:poc`：通过，完整回归耗时约 39.1 秒；仍有 Vite chunk 体积超过 500 kB 警告。
   - native session backpressure 阶段新增 `npm run media-worker:native:session-backpressure`：默认启动视频和音频线程、按 500ms 采样 3 秒、不主动 drain，验证 native payload queue 深度不超过配置容量，并在无消费者时产生 drop 计数；支持 `SMARTST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS` 和 `SMARTST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS` 模拟周期性消费者。
   - 执行 `npm run media-worker:native:session-backpressure`：通过，当前 1 路视频和 1 路音频下 `video.maxDepth=3`、`video.dropCountEnd=25`、`video.maxBytes=4147200`、`audio.maxDepth=50`、`audio.dropCountEnd=251`、`audio.maxBytes=192000`、`consumerStatus=not-attached`、`stoppedState=idle`。
+  - 执行 `$env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS=1000; $env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS=1000; npm run media-worker:native:session-backpressure`：通过，3 秒内执行 6 次 consume event，`video.consumeCountEnd=6`、`video.consumerStatus=manual-drain`、`video.maxDepth=3`，`audio.consumeCountEnd=15`、`audio.consumerStatus=manual-drain`、`audio.maxDepth=50`；该低频 drain 只验证消费者控制链路，不代表生产消费速率。
   - backpressure 阶段复测 `npm run test:all:poc`：通过，完整回归耗时约 42.4 秒；仍有 Vite chunk 体积超过 500 kB 警告。
   - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness`、`probe_native_worker_devices`、`start_native_worker_session`、`get_native_worker_session_status`、`stop_native_worker_session` 命令可编译。
   - 执行 `cargo test --manifest-path src-tauri/Cargo.toml`：通过，3 个 Tauri Native Worker helper 单元测试全部通过，覆盖默认 start 参数、workspace manifest 定位和 debug binary 路径命名。
