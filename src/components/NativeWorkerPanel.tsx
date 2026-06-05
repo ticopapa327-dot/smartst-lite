@@ -1,4 +1,4 @@
-import { Cpu, Mic, RefreshCw, Video } from "lucide-react";
+import { Activity, Cpu, Mic, RefreshCw, Video } from "lucide-react";
 import { useState } from "react";
 import {
   getNativeWorkerSessionStatus,
@@ -23,6 +23,8 @@ export function NativeWorkerPanel() {
   const [session, setSession] = useState<NativeWorkerSessionSnapshot | null>(null);
   const [isProbing, setIsProbing] = useState(false);
   const [isSessionBusy, setIsSessionBusy] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   const devices = (probe?.devices ?? null) as NativeWorkerDeviceSnapshot | null;
   const videoCount = Array.isArray(devices?.video) ? devices.video.length : 0;
@@ -30,13 +32,27 @@ export function NativeWorkerPanel() {
   const source = devices?.source ?? probe?.status ?? "not-probed";
   const workerMode = devices?.diagnostics?.workerDeviceMode ?? probe?.readiness.status ?? "unknown";
   const sessionState = session?.captureSession?.state ?? session?.state ?? "idle";
+  const isSessionRunning = sessionState === "running";
+  const boundVideoChannels = session?.captureSession?.boundVideoChannels ?? 0;
+  const boundAudioEndpoints = session?.captureSession?.boundAudioEndpoints ?? 0;
+  const videoThreadCount = session?.captureSession?.continuousVideoThreadCount ?? 0;
   const framesProduced = session?.stats?.framesProduced ?? 0;
   const audioPackets = session?.stats?.audioPacketsProduced ?? 0;
+  const frameQueuePushCount = session?.stats?.videoFrameQueuePushCount ?? 0;
+  const frameQueueDropCount = session?.stats?.videoFrameQueueDropCount ?? 0;
+  const realMediaSession = session?.stats?.realMediaSession === true;
 
   async function runProbe() {
     setIsProbing(true);
+    setProbeError(null);
     try {
-      setProbe(await probeNativeWorkerDevices());
+      const nextProbe = await probeNativeWorkerDevices();
+      setProbe(nextProbe);
+      if (nextProbe.status === "error" || nextProbe.status === "unavailable") {
+        setProbeError(nextProbe.message);
+      }
+    } catch (error) {
+      setProbeError(errorMessage(error));
     } finally {
       setIsProbing(false);
     }
@@ -44,6 +60,7 @@ export function NativeWorkerPanel() {
 
   async function startSession() {
     setIsSessionBusy(true);
+    setSessionError(null);
     try {
       setSession(
         await startNativeWorkerSession({
@@ -55,6 +72,8 @@ export function NativeWorkerPanel() {
           videoFrameQueueCapacity: 3,
         }),
       );
+    } catch (error) {
+      setSessionError(errorMessage(error));
     } finally {
       setIsSessionBusy(false);
     }
@@ -62,8 +81,11 @@ export function NativeWorkerPanel() {
 
   async function refreshSession() {
     setIsSessionBusy(true);
+    setSessionError(null);
     try {
       setSession(await getNativeWorkerSessionStatus());
+    } catch (error) {
+      setSessionError(errorMessage(error));
     } finally {
       setIsSessionBusy(false);
     }
@@ -71,8 +93,11 @@ export function NativeWorkerPanel() {
 
   async function stopSession() {
     setIsSessionBusy(true);
+    setSessionError(null);
     try {
       setSession(await stopNativeWorkerSession());
+    } catch (error) {
+      setSessionError(errorMessage(error));
     } finally {
       setIsSessionBusy(false);
     }
@@ -109,23 +134,40 @@ export function NativeWorkerPanel() {
           <strong>{sessionState}</strong>
           <span>{framesProduced} video samples / {audioPackets} audio packets</span>
         </div>
+        <div className="recording-stat">
+          <Activity size={18} />
+          <strong>{boundVideoChannels} video / {boundAudioEndpoints} audio</strong>
+          <span>{videoThreadCount} native video thread{videoThreadCount === 1 ? "" : "s"}</span>
+        </div>
+        <div className="recording-stat">
+          <Cpu size={18} />
+          <strong>{frameQueuePushCount} push / {frameQueueDropCount} drop</strong>
+          <span>{realMediaSession ? "real media session" : "media session idle"}</span>
+        </div>
       </div>
+
+      {probeError ? <div className="native-worker-alert">{probeError}</div> : null}
+      {sessionError ? <div className="native-worker-alert">{sessionError}</div> : null}
 
       <div className="hmi-action-row">
         <button className="hmi-button primary" disabled={isProbing} onClick={runProbe} type="button">
           <RefreshCw size={15} />
           {isProbing ? "Probing" : "Probe devices"}
         </button>
-        <button className="hmi-button" disabled={isSessionBusy} onClick={startSession} type="button">
+        <button className="hmi-button" disabled={isSessionBusy || isSessionRunning} onClick={startSession} type="button">
           Start session
         </button>
         <button className="hmi-button" disabled={isSessionBusy} onClick={refreshSession} type="button">
           Status
         </button>
-        <button className="hmi-button danger" disabled={isSessionBusy} onClick={stopSession} type="button">
+        <button className="hmi-button danger" disabled={isSessionBusy || !isSessionRunning} onClick={stopSession} type="button">
           Stop
         </button>
       </div>
     </section>
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
