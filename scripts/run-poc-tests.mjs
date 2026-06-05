@@ -19,6 +19,7 @@ const checks = [
   ["run", "media-worker:native:video-ppm-export"],
   ["run", "media-worker:native:audio-payload-consume"],
   ["run", "media-worker:native:audio-call-drain"],
+  ["run", "media-worker:native:interaction-drain"],
   ["run", "media-worker:native:audio-wav-export"],
   ["run", "media-worker:native:export-artifact-manifest"],
   ["run", "media-worker:native:audio-profile"],

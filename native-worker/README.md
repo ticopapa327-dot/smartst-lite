@@ -252,6 +252,22 @@ $env:SMARTST_NATIVE_AUDIO_CALL_DRAIN_MAX_PACKETS="5"
 npm run media-worker:native:audio-call-drain
 ```
 
+## Simulate Native Interaction Drain
+
+```powershell
+npm run media-worker:native:interaction-drain
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_INTERACTION_DRAIN_DURATION_MS="2000"
+$env:SMARTST_NATIVE_INTERACTION_DRAIN_INTERVAL_MS="250"
+$env:SMARTST_NATIVE_INTERACTION_DRAIN_MAX_VIDEO_FRAMES="1"
+$env:SMARTST_NATIVE_INTERACTION_DRAIN_MAX_AUDIO_PACKETS="5"
+npm run media-worker:native:interaction-drain
+```
+
 ## Export Native Audio Payload Queue To WAV
 
 ```powershell
@@ -348,6 +364,8 @@ Each video thread reports `frameQueue` statistics with `mode=native-payload-boun
 The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines. `consumeAudioPayloadQueue` drains queued native PCM packets and returns only metadata and byte counters, so it can validate the future resampler/AEC/publisher/recorder consumer boundary without returning PCM bytes. `exportAudioPayloadQueueWav` drains queued PCM packets and writes a native-side WAV file for PCM/IEEE_FLOAT mix formats; the JSON response returns only file metadata and byte counters. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or implement final recording policy. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
 
 `audio-call-drain` simulates a future audio call or publisher consumer by periodically draining native PCM packet batches and validating increasing sequence metadata, byte counters, `payloadTransport=native-only`, and `exportedOverJson=false`. It still does not perform resampling, AEC, denoising, LiveKit publishing, encoding, recording, or audio quality acceptance.
+
+`interaction-drain` starts video and audio in the same native session and periodically drains both queues. It validates the combined control path expected by an interactive teaching connection, but it still does not render preview textures, publish LiveKit tracks, perform AEC, encode, record, or prove end-to-end media sync.
 
 `export-artifact-manifest` is a Node-side verification script that reads the generated PGM, PPM, and WAV files, verifies their headers and dimensions, checks the artifact mtime is fresh by default, computes SHA-256 checksums, and writes `smartst.native-export-artifacts.v0.1` JSON. It is an export smoke artifact manifest only; it is not the formal surgical recording manifest, patient binding contract, playback index, or storage policy.
 
