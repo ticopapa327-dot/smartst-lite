@@ -125,6 +125,14 @@ struct VideoCaptureThreadStats {
     channel_id: String,
     device_index: u32,
     media_type_index: u32,
+    frame_queue_capacity: u32,
+    frame_queue_depth: u32,
+    frame_queue_push_count: u64,
+    frame_queue_drop_count: u64,
+    frame_queue_latest_sequence: Option<u64>,
+    frame_queue_latest_timestamp_hns: Option<i64>,
+    frame_queue_latest_sample_time_hns: Option<i64>,
+    frame_queue_latest_total_length_bytes: Option<u32>,
     read_count: u64,
     sample_count: u64,
     empty_read_count: u64,
@@ -316,6 +324,11 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
     state.recording = idle_recording();
     state.livekit = idle_livekit();
     state.stats = session_start.stats;
+    let video_frame_queue_capacity = optional_u32(&params, "videoFrameQueueCapacity")
+        .ok()
+        .flatten()
+        .unwrap_or(3)
+        .clamp(1, 120);
     for (channel_id, video_index) in video_thread_start_targets(&state.channels, &params) {
         let media_type_index = state.capture_session["videoMediaTypeIndex"]
             .as_u64()
@@ -325,6 +338,7 @@ fn start_worker(state: &mut WorkerState, params: &Value) -> Value {
             channel_id.clone(),
             video_index,
             media_type_index,
+            video_frame_queue_capacity,
         ));
         mark_channel_stats_status(&mut state.channels, &channel_id, "running");
     }
@@ -511,6 +525,8 @@ fn build_capture_session_start(
         "videoBytesCaptured": 0,
         "videoCaptureThreadCount": 0,
         "videoCaptureThreads": [],
+        "videoFrameQueuePushCount": 0,
+        "videoFrameQueueDropCount": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
@@ -739,6 +755,8 @@ fn mock_capture_session_start(
         "videoBytesCaptured": 0,
         "videoCaptureThreadCount": 0,
         "videoCaptureThreads": [],
+        "videoFrameQueuePushCount": 0,
+        "videoFrameQueueDropCount": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,
@@ -806,12 +824,14 @@ fn start_video_capture_runtime(
     channel_id: String,
     video_index: u32,
     media_type_index: u32,
+    frame_queue_capacity: u32,
 ) -> VideoCaptureRuntime {
     let stop = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(Mutex::new(VideoCaptureThreadStats::new(
         channel_id.clone(),
         video_index,
         media_type_index,
+        frame_queue_capacity,
     )));
     let thread_stop = Arc::clone(&stop);
     let thread_stats = Arc::clone(&stats);
@@ -820,6 +840,7 @@ fn start_video_capture_runtime(
             channel_id,
             video_index,
             media_type_index,
+            frame_queue_capacity,
             thread_stop,
             thread_stats,
         );
@@ -853,6 +874,7 @@ fn run_video_capture_thread(
     _channel_id: String,
     video_index: u32,
     media_type_index: u32,
+    _frame_queue_capacity: u32,
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<VideoCaptureThreadStats>>,
 ) {
@@ -948,7 +970,8 @@ fn run_video_capture_thread(
                             stats.sample_count = stats.sample_count.saturating_add(1);
                             stats.first_timestamp_hns.get_or_insert(timestamp_hns);
                             stats.last_timestamp_hns = Some(timestamp_hns);
-                            if let Ok(total_length) = unsafe { sample.GetTotalLength() } {
+                            let total_length = unsafe { sample.GetTotalLength().ok() };
+                            if let Some(total_length) = total_length {
                                 stats.total_length_bytes = stats
                                     .total_length_bytes
                                     .saturating_add(u64::from(total_length));
@@ -958,7 +981,8 @@ fn run_video_capture_thread(
                                     .total_buffer_count
                                     .saturating_add(u64::from(buffer_count));
                             }
-                            if let Ok(sample_time_hns) = unsafe { sample.GetSampleTime() } {
+                            let sample_time_hns = unsafe { sample.GetSampleTime().ok() };
+                            if let Some(sample_time_hns) = sample_time_hns {
                                 stats.first_sample_time_hns.get_or_insert(sample_time_hns);
                                 stats.last_sample_time_hns = Some(sample_time_hns);
                             }
@@ -966,6 +990,18 @@ fn run_video_capture_thread(
                                 stats.sample_duration_sum_hns += i128::from(sample_duration_hns);
                                 stats.sample_duration_count =
                                     stats.sample_duration_count.saturating_add(1);
+                            }
+                            stats.frame_queue_push_count =
+                                stats.frame_queue_push_count.saturating_add(1);
+                            stats.frame_queue_latest_sequence = Some(stats.sample_count);
+                            stats.frame_queue_latest_timestamp_hns = Some(timestamp_hns);
+                            stats.frame_queue_latest_sample_time_hns = sample_time_hns;
+                            stats.frame_queue_latest_total_length_bytes = total_length;
+                            if stats.frame_queue_depth < stats.frame_queue_capacity {
+                                stats.frame_queue_depth = stats.frame_queue_depth.saturating_add(1);
+                            } else {
+                                stats.frame_queue_drop_count =
+                                    stats.frame_queue_drop_count.saturating_add(1);
                             }
                             stats.elapsed_ms = started.elapsed().as_millis();
                         });
@@ -1031,7 +1067,12 @@ impl VideoCaptureRuntime {
 }
 
 impl VideoCaptureThreadStats {
-    fn new(channel_id: String, device_index: u32, media_type_index: u32) -> Self {
+    fn new(
+        channel_id: String,
+        device_index: u32,
+        media_type_index: u32,
+        frame_queue_capacity: u32,
+    ) -> Self {
         Self {
             state: "starting".to_string(),
             started_at: now_iso_like(),
@@ -1040,6 +1081,14 @@ impl VideoCaptureThreadStats {
             channel_id,
             device_index,
             media_type_index,
+            frame_queue_capacity,
+            frame_queue_depth: 0,
+            frame_queue_push_count: 0,
+            frame_queue_drop_count: 0,
+            frame_queue_latest_sequence: None,
+            frame_queue_latest_timestamp_hns: None,
+            frame_queue_latest_sample_time_hns: None,
+            frame_queue_latest_total_length_bytes: None,
             read_count: 0,
             sample_count: 0,
             empty_read_count: 0,
@@ -1355,6 +1404,24 @@ fn stats_with_runtimes(
             .iter()
             .filter_map(|stats| stats.get("totalLengthBytes").and_then(Value::as_u64))
             .sum::<u64>();
+        let frame_queue_push_count = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("pushCount"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
+        let frame_queue_drop_count = video_stats
+            .iter()
+            .filter_map(|stats| {
+                stats
+                    .get("frameQueue")
+                    .and_then(|queue| queue.get("dropCount"))
+                    .and_then(Value::as_u64)
+            })
+            .sum::<u64>();
         if let Some(first_video_stats) = video_stats.first() {
             stats["videoCaptureThread"] = first_video_stats.clone();
         }
@@ -1362,6 +1429,8 @@ fn stats_with_runtimes(
         stats["videoCaptureThreadCount"] = json!(video_runtimes.len());
         stats["framesProduced"] = json!(frames_produced);
         stats["videoBytesCaptured"] = json!(video_bytes_captured);
+        stats["videoFrameQueuePushCount"] = json!(frame_queue_push_count);
+        stats["videoFrameQueueDropCount"] = json!(frame_queue_drop_count);
     }
     stats
 }
@@ -1426,6 +1495,19 @@ fn video_capture_thread_stats_to_json(stats: &VideoCaptureThreadStats) -> Value 
         "channelId": stats.channel_id,
         "deviceIndex": stats.device_index,
         "mediaTypeIndex": stats.media_type_index,
+        "frameQueue": {
+            "mode": "metadata-only-bounded",
+            "payloadTransport": "native-only",
+            "consumerStatus": "not-attached",
+            "capacity": stats.frame_queue_capacity,
+            "depth": stats.frame_queue_depth,
+            "pushCount": stats.frame_queue_push_count,
+            "dropCount": stats.frame_queue_drop_count,
+            "latestSequence": stats.frame_queue_latest_sequence,
+            "latestTimestampHns": stats.frame_queue_latest_timestamp_hns,
+            "latestSampleTimeHns": stats.frame_queue_latest_sample_time_hns,
+            "latestTotalLengthBytes": stats.frame_queue_latest_total_length_bytes
+        },
         "readCount": stats.read_count,
         "sampleCount": stats.sample_count,
         "emptyReadCount": stats.empty_read_count,
@@ -2748,6 +2830,8 @@ fn idle_stats() -> Value {
         "videoBytesCaptured": 0,
         "videoCaptureThreadCount": 0,
         "videoCaptureThreads": [],
+        "videoFrameQueuePushCount": 0,
+        "videoFrameQueueDropCount": 0,
         "audioPacketsProduced": 0,
         "audioFramesCaptured": 0,
         "audioBytesCaptured": 0,

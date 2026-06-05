@@ -13,6 +13,7 @@ const iterations = readIntegerEnv("SMARTST_NATIVE_SESSION_STRESS_ITERATIONS", 3)
 const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 1000);
 const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
 const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
+const videoFrameQueueCapacity = readIntegerEnv("SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", undefined);
 const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
@@ -72,6 +73,7 @@ try {
       channels,
       videoMediaTypeIndex,
       ...(videoThreadLimit === undefined ? {} : { videoThreadLimit }),
+      ...(videoFrameQueueCapacity === undefined ? {} : { videoFrameQueueCapacity }),
       audioIndex,
       startVideoThread: true,
       startAudioThread: true,
@@ -90,6 +92,9 @@ try {
       for (const thread of videoThreads) {
         assert(thread.state === "running", `iteration ${iteration}: video thread ${thread.channelId} running`);
         assert(thread.sampleCount > 0, `iteration ${iteration}: video samples captured on ${thread.channelId}`);
+        assert(thread.frameQueue?.mode === "metadata-only-bounded", `iteration ${iteration}: frame queue mode reported on ${thread.channelId}`);
+        assert(thread.frameQueue.pushCount === thread.sampleCount, `iteration ${iteration}: frame queue push count matches samples on ${thread.channelId}`);
+        assert(thread.frameQueue.depth <= thread.frameQueue.capacity, `iteration ${iteration}: frame queue depth bounded on ${thread.channelId}`);
       }
     }
     if (started.captureSession?.boundAudioEndpoints > 0) {
@@ -114,8 +119,11 @@ try {
         state: thread.state,
         sampleCount: thread.sampleCount ?? 0,
         measuredFps: thread.measuredFps ?? null,
+        frameQueue: thread.frameQueue ?? null,
       })),
       videoSamples: sumBy(videoThreads, "sampleCount"),
+      videoFrameQueuePushCount: status.stats?.videoFrameQueuePushCount ?? 0,
+      videoFrameQueueDropCount: status.stats?.videoFrameQueueDropCount ?? 0,
       audioState: audioThread?.state ?? null,
       audioPackets: audioThread?.packetCount ?? 0,
       audioFrames: audioThread?.capturedFrames ?? 0,

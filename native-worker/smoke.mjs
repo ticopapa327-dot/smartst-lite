@@ -74,7 +74,12 @@ try {
       assert(["starting", "initializing", "running", "stopped", "failed"].includes(thread.state), "video thread state is explicit");
       assert(thread.channelId, "video thread channel id is reported");
       assert(Number.isInteger(thread.deviceIndex), "video thread device index is reported");
+      assert(thread.frameQueue?.mode === "metadata-only-bounded", "video frame queue boundary is explicit");
+      assert(thread.frameQueue.payloadTransport === "native-only", "video frame queue keeps payload native-only");
+      assert(Number.isInteger(thread.frameQueue.capacity), "video frame queue capacity is reported");
     }
+    assert(Number.isInteger(status.stats.videoFrameQueuePushCount), "video frame queue push aggregate is reported");
+    assert(Number.isInteger(status.stats.videoFrameQueueDropCount), "video frame queue drop aggregate is reported");
   }
   if (started.captureSession?.boundAudioEndpoints > 0) {
     assert(status.stats?.audioCaptureThread, "status reports audio capture thread stats");

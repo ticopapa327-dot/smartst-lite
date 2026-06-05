@@ -94,6 +94,7 @@ Environment overrides:
 $env:SMARTST_NATIVE_SESSION_CHANNELS="field-camera,endoscope"
 $env:SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
 $env:SMARTST_NATIVE_VIDEO_THREAD_LIMIT="2"
+$env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
 $env:SMARTST_NATIVE_AUDIO_INDEX="0"
 $env:SMARTST_NATIVE_SESSION_HOLD_MS="500"
 npm run media-worker:native:session
@@ -111,6 +112,7 @@ Environment overrides:
 $env:SMARTST_NATIVE_SESSION_STRESS_ITERATIONS="3"
 $env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
 $env:SMARTST_NATIVE_VIDEO_THREAD_LIMIT="2"
+$env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
 npm run media-worker:native:session-stress
 ```
 
@@ -132,4 +134,6 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 
 `captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
 
-`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video statistics thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, or pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation.
+`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video statistics thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, or pass `videoFrameQueueCapacity` / `SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the metadata-only bounded frame queue.
+
+Each video thread reports `frameQueue` statistics with `mode=metadata-only-bounded` and `payloadTransport=native-only`. This queue records frame metadata only; it does not copy or export frame payloads through JSON Lines. Until a preview/publisher/recorder consumer is attached, new metadata overwrites the bounded queue after capacity is reached and increments `dropCount`.
