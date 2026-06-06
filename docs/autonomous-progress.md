@@ -262,6 +262,7 @@
   - `native-worker/video-loop.mjs`
   - `native-worker/audio-probe.mjs`
   - `native-worker/audio-render-probe.mjs`
+  - `native-worker/audio-render-silence.mjs`
   - `native-worker/session.mjs`
   - `native-worker/session-stress.mjs`
   - `src-tauri/src/main.rs`
@@ -327,6 +328,7 @@
   - backpressure 阶段复测 `npm run test:all:poc`：通过，完整回归耗时约 42.4 秒；仍有 Vite chunk 体积超过 500 kB 警告。
   - WASAPI render 播放端点枚举阶段新增 `listDevices.audioRender` 和 `diagnostics.wasapiRender`：`cargo check --manifest-path native-worker/Cargo.toml`、`cargo fmt --manifest-path native-worker/Cargo.toml --check`、`npm run media-worker:native:smoke` 均通过；`npm run media-worker:native:list-devices` 返回 `wasapiRender.status=ok`、`wasapiRender.count=1`、`audioRender[0]=扬声器 (Senary Audio)`；`npm run test:all:poc` 完整回归通过，耗时约 66.5 秒。该阶段只证明播放端点可枚举，不代表已实现 WASAPI render client、回放、loopback 或 AEC。
   - WASAPI render mix format 阶段新增 Native Worker 命令 `probeAudioRenderFormat` 和脚本 `npm run media-worker:native:audio-render-probe`：通过，当前第 0 路 render 端点 `扬声器 (Senary Audio)` 返回 48000Hz、2ch、EXTENSIBLE/IEEE_FLOAT、32-bit、blockAlign=8，`devicePeriod.defaultHns=100000`、`minimumHns=30000`、`renderClientStatus=not-opened`；该命令已接入 `npm run test:all:poc` 回归链路，完整回归通过，耗时约 66.8 秒。
+  - WASAPI render 静音写入阶段新增 Native Worker 命令 `renderAudioSilence` 和脚本 `npm run media-worker:native:audio-render-silence`：通过，500ms 内当前第 0 路 render 端点 `扬声器 (Senary Audio)` 以共享模式打开 render client，写入 48480 frames / 387840 bytes，`bufferFrameCapacity=24000`、`writeCount=49`、`renderClientStatus=opened-stopped`、`audibleOutput=silence`、`loopbackCaptured=false`、`aecStatus=not-run`；该命令已接入 `npm run test:all:poc` 回归链路。
   - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness`、`probe_native_worker_devices`、`start_native_worker_session`、`get_native_worker_session_status`、`stop_native_worker_session` 命令可编译。
   - 执行 `cargo test --manifest-path src-tauri/Cargo.toml`：通过，3 个 Tauri Native Worker helper 单元测试全部通过，覆盖默认 start 参数、workspace manifest 定位和 debug binary 路径命名。
   - 执行 `npm run build`：通过，Workbench 已接入 Native Worker readiness 状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；普通浏览器环境返回 `desktop-only`，不启动采集。
@@ -340,15 +342,15 @@
 - Native Worker 控制面骨架：
   - 已创建独立 Rust crate `native-worker`。
   - 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`consumeVideoPayloadQueue`、`exportVideoPayloadQueuePgm`、`exportVideoPayloadQueuePpm`、`consumeAudioPayloadQueue`、`exportAudioPayloadQueueWav`、`status`、`shutdown`。
-  - `listDevices` 已接入 Windows 原生枚举：Media Foundation 视频设备、WASAPI/Core Audio 采集端点和 WASAPI render 播放端点；`probeAudioRenderFormat` 可读取 render endpoint 的 mix format 和 device period。
+  - `listDevices` 已接入 Windows 原生枚举：Media Foundation 视频设备、WASAPI/Core Audio 采集端点和 WASAPI render 播放端点；`probeAudioRenderFormat` 可读取 render endpoint 的 mix format 和 device period；`renderAudioSilence` 可短时打开 render client 并写入 silent buffer。
   - `start/status/stop` 已进入真实采集会话骨架：绑定当前视频/音频设备和默认媒体格式，缺失通道标记为 `waiting-for-device`，并在绑定设备时默认为每个已绑定视频通道启动可停止的 Media Foundation 视频统计线程，同时启动 WASAPI 音频统计线程。
   - 已增加 `media-worker:native:session-stress`，用于重复验证 start/status/stop 和线程 stop/join 清理。
   - 已增加 `probeVideoCapabilities` 和 `captureVideoSample`，可验证单路 Media Foundation 原生媒体类型和首帧样本读取。
   - 已增加 `measureVideoFrames`，可验证单路 Media Foundation 连续帧读取和帧率统计；真实帧 payload 仍留在 native 侧，不通过 JSON Lines 传输。
-  - 已增加 `probeAudioFormat`、`probeAudioRenderFormat` 和 `captureAudioBuffer`，可验证 WASAPI capture/render mix format 和短时 capture buffer 读取。
+  - 已增加 `probeAudioFormat`、`probeAudioRenderFormat`、`captureAudioBuffer` 和 `renderAudioSilence`，可验证 WASAPI capture/render mix format、短时 capture buffer 读取和 render client 静音写入。
   - 已增加 `media-worker:native:audio-profile`，可对当前 WASAPI capture endpoint 做短时 RMS/peak/profile 基线采样。
   - 已增加 `media-worker:native:session-backpressure`，可验证视频/音频 native payload queue 在无消费者或周期性消费者场景下保持有界。
-  - 当前已接入多路视频线程结构、Native Worker 显式视频通道绑定、Native Worker 视频格式偏好选择、Native Worker session plan smoke、native-only 有界帧 payload 队列、视频手动 drain 消费验证、视频 preview drain 消费者模拟、视频 native-side NV12/PGM 灰度导出、NV12/PPM RGB 转换导出验证、Native Worker 导出产物 manifest 校验、Tauri/工作台 Drain video/audio/AV 控制、WASAPI RMS/peak 音量统计、WASAPI render 播放端点枚举、native-only 有界 PCM packet payload 队列、音频手动 drain 消费验证、音频 call drain 消费者模拟、音视频 interaction drain 联合消费者模拟、短时 AV soak 连续采集验证、音频 native-side WAV 文件导出验证和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入预览纹理、音频重采样/AEC、WASAPI 播放/loopback、LiveKit native publisher 或真实录像。
+  - 当前已接入多路视频线程结构、Native Worker 显式视频通道绑定、Native Worker 视频格式偏好选择、Native Worker session plan smoke、native-only 有界帧 payload 队列、视频手动 drain 消费验证、视频 preview drain 消费者模拟、视频 native-side NV12/PGM 灰度导出、NV12/PPM RGB 转换导出验证、Native Worker 导出产物 manifest 校验、Tauri/工作台 Drain video/audio/AV 控制、WASAPI RMS/peak 音量统计、WASAPI render 播放端点枚举、WASAPI render mix format 探测、WASAPI render 静音写入、native-only 有界 PCM packet payload 队列、音频手动 drain 消费验证、音频 call drain 消费者模拟、音视频 interaction drain 联合消费者模拟、短时 AV soak 连续采集验证、音频 native-side WAV 文件导出验证和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入预览纹理、音频重采样/AEC、WASAPI 有声播放/loopback、LiveKit native publisher 或真实录像。
   - 桌面端已新增 Native Worker readiness 诊断入口、工作台状态条、手动 `Device Probe` 面板、手动 start/status/stop 控件、`Drain video`、`Drain audio` 和 `Drain AV` 控件；`Device Probe` 会显示视频、音频采集和音频播放端点数量；`Drain video` 和 `Drain AV` 会按当前 session 绑定的 `channelId` 触发视频 queue drain，避免控制面依赖隐式第一路；`probe_native_worker_devices` 只通过 Native Worker 执行 `listDevices` 枚举，不执行 `start`，不启动连续采集线程；start/status/stop/drain 控件只展示 JSON 状态统计、latestSequence 和 queue depth，不传输媒体 payload。
   - start/status/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、视频 native payload queue bytes/copy/consume 和音频 native PCM queue bytes/copy/consume 展示；该展示仍是控制面状态展示，不承载媒体 payload。
   - Tauri 持有的 Native Worker session 已增加 Drop 清理，runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。

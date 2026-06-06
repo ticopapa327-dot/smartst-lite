@@ -13,10 +13,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows::core::{BSTR, GUID, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
-    eCapture, eRender, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
-    MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, AUDCLNT_BUFFERFLAGS_SILENT,
-    AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR, AUDCLNT_SHAREMODE_SHARED, DEVICE_STATE_ACTIVE,
-    WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
+    eCapture, eRender, IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice,
+    IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
+    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR, AUDCLNT_SHAREMODE_SHARED,
+    DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
 };
 use windows::Win32::Media::MediaFoundation::{
     IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, IMFSample, MFCreateAttributes,
@@ -611,6 +611,11 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         )),
         "captureAudioBuffer" => Ok((
             capture_audio_buffer(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
+        "renderAudioSilence" => Ok((
+            render_audio_silence(&params)
                 .map_err(|message| WorkerError::new("native-media-error", message))?,
             false,
         )),
@@ -4743,6 +4748,24 @@ fn capture_audio_buffer(params: &Value) -> Result<Value, String> {
     })
 }
 
+fn render_audio_silence(params: &Value) -> Result<Value, String> {
+    let duration_ms = optional_u32(params, "durationMs")?
+        .unwrap_or(500)
+        .clamp(100, 5_000);
+    let poll_interval_ms = optional_u32(params, "pollIntervalMs")?
+        .unwrap_or(10)
+        .clamp(1, 100);
+    let _com = ComApartment::initialize()?;
+    with_audio_render_devices(|records| {
+        let selected = select_audio_records_with_label(&records, params, "audio render")?;
+        let record = selected
+            .first()
+            .copied()
+            .ok_or_else(|| "No audio render device selected".to_string())?;
+        render_audio_silence_for_record(record, duration_ms, poll_interval_ms)
+    })
+}
+
 fn probe_audio_record_format(record: &AudioDeviceRecord) -> Result<Value, String> {
     let audio_client: IAudioClient = unsafe {
         record
@@ -4932,6 +4955,125 @@ fn capture_audio_buffer_for_record(
             (Ok(_), Err(error)) => Err(error),
         }
     })
+}
+
+fn render_audio_silence_for_record(
+    record: &AudioDeviceRecord,
+    duration_ms: u32,
+    poll_interval_ms: u32,
+) -> Result<Value, String> {
+    let audio_client: IAudioClient = unsafe {
+        record
+            .device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(format_windows_error)?
+    };
+    with_audio_mix_format(&audio_client, |format_ptr| {
+        let mix_format = wave_format_to_json(format_ptr)?;
+        let format = unsafe { *format_ptr };
+        let block_align = u64::from(format.nBlockAlign.max(1));
+        let stream_buffer_duration_hns = i64::from(duration_ms.max(500)) * 10_000;
+        unsafe {
+            audio_client
+                .Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    0,
+                    stream_buffer_duration_hns,
+                    0,
+                    format_ptr,
+                    None,
+                )
+                .map_err(format_windows_error)?;
+        }
+        let buffer_frame_capacity =
+            unsafe { audio_client.GetBufferSize().map_err(format_windows_error)? };
+        let stream_latency_hns = unsafe { audio_client.GetStreamLatency().ok() };
+        let render_client: IAudioRenderClient =
+            unsafe { audio_client.GetService().map_err(format_windows_error)? };
+
+        let mut poll_count = 0u32;
+        let mut write_count = 0u64;
+        let mut frames_written = 0u64;
+        let mut max_padding_frames = 0u32;
+        let mut last_padding_frames = None;
+
+        if buffer_frame_capacity > 0 {
+            write_render_silent_frames(&render_client, buffer_frame_capacity)?;
+            write_count = write_count.saturating_add(1);
+            frames_written = frames_written.saturating_add(u64::from(buffer_frame_capacity));
+        }
+
+        unsafe {
+            audio_client.Start().map_err(format_windows_error)?;
+        }
+
+        let started_at = Instant::now();
+        let render_result = (|| {
+            while started_at.elapsed() < Duration::from_millis(u64::from(duration_ms)) {
+                poll_count = poll_count.saturating_add(1);
+                let padding_frames = unsafe {
+                    audio_client
+                        .GetCurrentPadding()
+                        .map_err(format_windows_error)?
+                };
+                max_padding_frames = max_padding_frames.max(padding_frames);
+                last_padding_frames = Some(padding_frames);
+                let available_frames = buffer_frame_capacity.saturating_sub(padding_frames);
+                if available_frames > 0 {
+                    write_render_silent_frames(&render_client, available_frames)?;
+                    write_count = write_count.saturating_add(1);
+                    frames_written = frames_written.saturating_add(u64::from(available_frames));
+                }
+                thread::sleep(Duration::from_millis(u64::from(poll_interval_ms)));
+            }
+
+            Ok(json!({
+                "status": "silence-rendered",
+                "backend": "wasapi",
+                "device": audio_render_device_record_to_json(record),
+                "mixFormat": mix_format,
+                "durationMs": duration_ms,
+                "elapsedMs": started_at.elapsed().as_millis(),
+                "pollIntervalMs": poll_interval_ms,
+                "pollCount": poll_count,
+                "writeCount": write_count,
+                "framesWritten": frames_written,
+                "bytesWritten": frames_written.saturating_mul(block_align),
+                "bufferFrameCapacity": buffer_frame_capacity,
+                "streamLatencyHns": stream_latency_hns,
+                "maxPaddingFrames": max_padding_frames,
+                "lastPaddingFrames": last_padding_frames,
+                "renderClientStatus": "opened-stopped",
+                "audibleOutput": "silence",
+                "loopbackCaptured": false,
+                "aecStatus": "not-run"
+            }))
+        })();
+        let stop_result = unsafe { audio_client.Stop().map_err(format_windows_error) };
+        match (render_result, stop_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+}
+
+fn write_render_silent_frames(
+    render_client: &IAudioRenderClient,
+    frame_count: u32,
+) -> Result<(), String> {
+    if frame_count == 0 {
+        return Ok(());
+    }
+    unsafe {
+        let _data_ptr = render_client
+            .GetBuffer(frame_count)
+            .map_err(format_windows_error)?;
+        render_client
+            .ReleaseBuffer(frame_count, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)
+            .map_err(format_windows_error)?;
+    }
+    Ok(())
 }
 
 fn with_audio_mix_format<T>(

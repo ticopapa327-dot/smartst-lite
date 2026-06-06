@@ -24,6 +24,7 @@ const checks = [
   ["run", "media-worker:native:audio-wav-export"],
   ["run", "media-worker:native:export-artifact-manifest"],
   ["run", "media-worker:native:audio-render-probe"],
+  ["run", "media-worker:native:audio-render-silence"],
   ["run", "media-worker:native:audio-profile"],
   ["run", "media-worker:native:session-backpressure"],
   ["run", "media-worker:native-readiness:smoke"],
