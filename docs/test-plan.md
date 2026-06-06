@@ -44,6 +44,7 @@ npm run recording:poc:smoke
 npm run media-worker:native:build:release
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri:build:exe
+npm run media-worker:native:release-smoke
 npm run tauri:build
 ```
 
@@ -52,6 +53,7 @@ npm run tauri:build
 - `src-tauri\target\release\smartst-lite.exe` 生成。
 - `native-worker\target\release\smartst-native-worker.exe` 生成。
 - `src-tauri\target\release\bin\smartst-native-worker.exe` 生成。
+- `media-worker:native:release-smoke` 可直接启动 `src-tauri\target\release\bin\smartst-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`。
 - `src-tauri\target\release\bundle\nsis\SmartST Lite_0.1.4_x64-setup.exe` 生成。
 - `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\smartst-native-worker.exe"` 和卸载删除项。
 

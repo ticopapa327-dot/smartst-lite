@@ -41,6 +41,12 @@ npm run media-worker:native:build:release
 
 The Tauri desktop package includes the release binary as `bin\smartst-native-worker.exe`.
 
+Validate the packaged release binary directly:
+
+```powershell
+npm run media-worker:native:release-smoke
+```
+
 ## List Native Devices
 
 ```powershell

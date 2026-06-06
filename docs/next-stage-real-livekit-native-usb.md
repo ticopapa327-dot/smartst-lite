@@ -863,6 +863,7 @@ npm run media-worker:native:build:release
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run build
 npm run tauri:build:exe
+npm run media-worker:native:release-smoke
 npm run tauri:build
 npm run test:all:poc
 ```
@@ -872,8 +873,9 @@ npm run test:all:poc
 - `cargo test --manifest-path src-tauri/Cargo.toml` 通过，6 个 Tauri helper 单元测试全部通过。
 - `npm run build` 通过，桌面前端构建无 TypeScript 错误。
 - `npm run tauri:build:exe` 通过，生成 `src-tauri/target/release/smartst-lite.exe`。
+- `npm run media-worker:native:release-smoke` 通过，直接启动 `src-tauri/target/release/bin/smartst-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`；当前返回 `source=windows-native`、`videoCount=1`、`audioCount=1`、`audioRenderCount=1`。
 - `npm run tauri:build` 通过，生成 `src-tauri/target/release/bundle/nsis/SmartST Lite_0.1.4_x64-setup.exe`。
-- `npm run test:all:poc` 通过，完整 PoC 回归耗时约 70.4 秒。
+- `npm run test:all:poc` 通过，完整 PoC 回归耗时约 69.3 秒。
 - Tauri release 目录已生成 `src-tauri/target/release/bin/smartst-native-worker.exe`。
 - 生成的 `src-tauri/target/release/nsis/x64/installer.nsi` 包含 `File /a "/oname=bin\smartst-native-worker.exe"`，卸载段包含 `Delete "$INSTDIR\bin\smartst-native-worker.exe"`。
 

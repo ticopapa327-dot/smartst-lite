@@ -148,6 +148,12 @@ npm run tauri:build
 
 上述两个 Tauri 构建脚本会先执行 `npm run media-worker:native:build:release`，确保发布版包含 `native-worker\target\release\smartst-native-worker.exe`。NSIS 安装包会把 Native Worker 安装到应用目录下的 `bin\smartst-native-worker.exe`。
 
+验证发布目录中的 Native Worker：
+
+```powershell
+npm run media-worker:native:release-smoke
+```
+
 ## 发布与安全
 
 不得提交：
