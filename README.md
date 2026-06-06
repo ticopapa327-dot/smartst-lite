@@ -160,6 +160,8 @@ npm run media-worker:native:release-smoke
 npm run tauri:install-smoke
 ```
 
+该命令会先运行安装目录下的 Worker 控制面 smoke，再以 `SMARTST_DESKTOP_SMOKE=1` 启动安装版 `smartst-lite.exe`，要求 packaged Native Worker ready、`listDevices`、`start`、Drain video/audio 和 `stop` 全部通过，并在静默卸载后检查安装目录、HKCU 卸载项和快捷方式无残留。
+
 ## 发布与安全
 
 不得提交：

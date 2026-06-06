@@ -57,7 +57,7 @@ npm run tauri:install-smoke
 - `media-worker:native:release-smoke` 可直接启动 `src-tauri\target\release\bin\smartst-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`。
 - `src-tauri\target\release\bundle\nsis\SmartST Lite_0.1.4_x64-setup.exe` 生成。
 - `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\smartst-native-worker.exe"` 和卸载删除项。
-- `tauri:install-smoke` 只允许安装到 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录；必须验证安装文件、HKCU 卸载项、桌面/开始菜单快捷方式、安装目录 Worker 控制面、主程序 5 秒存活和静默卸载后无目录/注册表/快捷方式残留。
+- `tauri:install-smoke` 只允许安装到 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录；必须验证安装文件、HKCU 卸载项、桌面/开始菜单快捷方式、安装目录 Worker 控制面、安装版主程序内部 smoke，以及静默卸载后无目录/注册表/快捷方式残留。安装版主程序内部 smoke 必须通过 `SMARTST_DESKTOP_SMOKE=1` 启动 installed exe，并要求 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1` 下 packaged Worker ready、`start`、视频 drain、音频 drain 和 `stop` 全部通过。
 
 ### L1 本机设备预检
 

@@ -32,6 +32,10 @@ const WS_DISCOVERY_PORT: u16 = 3702;
 const PREVIEW_HTTP_PORT_START: u16 = 38180;
 const PREVIEW_HTTP_PORT_END: u16 = 38199;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const DESKTOP_SMOKE_ENV: &str = "SMARTST_DESKTOP_SMOKE";
+const DESKTOP_SMOKE_OUTPUT_ENV: &str = "SMARTST_DESKTOP_SMOKE_OUTPUT";
+const DESKTOP_SMOKE_REQUIRE_PACKAGED_ENV: &str = "SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED";
+const DESKTOP_SMOKE_REQUIRE_AV_ENV: &str = "SMARTST_DESKTOP_SMOKE_REQUIRE_AV";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1590,6 +1594,201 @@ fn default_native_worker_audio_payload_consume_params() -> Value {
     })
 }
 
+fn desktop_smoke_enabled() -> bool {
+    env_truthy(DESKTOP_SMOKE_ENV)
+}
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn desktop_smoke_output_path() -> PathBuf {
+    std::env::var_os(DESKTOP_SMOKE_OUTPUT_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("smartst-desktop-smoke-result.json"))
+}
+
+fn run_desktop_smoke(app: &tauri::AppHandle) -> Result<Value, String> {
+    let started_at = unix_timestamp_ms();
+    let require_packaged = env_truthy(DESKTOP_SMOKE_REQUIRE_PACKAGED_ENV);
+    let require_av = env_truthy(DESKTOP_SMOKE_REQUIRE_AV_ENV);
+    let readiness = native_worker_readiness(Some(app))?;
+
+    if readiness.status != "ready" {
+        return Err(format!(
+            "Native Worker is not ready for desktop smoke: {}",
+            readiness.message
+        ));
+    }
+    if require_packaged && readiness.launch_mode != "packaged" {
+        return Err(format!(
+            "Desktop smoke requires packaged Native Worker, got launchMode={}",
+            readiness.launch_mode
+        ));
+    }
+
+    let mut worker = spawn_native_worker_process(Some(app))?;
+    let devices_id = native_worker_request_id("desktop-smoke-devices");
+    write_native_worker_request(&mut worker.stdin, &devices_id, "listDevices", Value::Null)?;
+    let devices =
+        wait_native_worker_response(&worker.line_receiver, &devices_id, Duration::from_secs(30))?;
+
+    let start_id = native_worker_request_id("desktop-smoke-start");
+    write_native_worker_request(
+        &mut worker.stdin,
+        &start_id,
+        "start",
+        default_native_worker_start_params(),
+    )?;
+    let started =
+        wait_native_worker_response(&worker.line_receiver, &start_id, Duration::from_secs(30))?;
+    if started.get("state").and_then(Value::as_str) != Some("running") {
+        return Err("Desktop smoke Native Worker start did not return running.".to_string());
+    }
+
+    thread::sleep(Duration::from_millis(1500));
+
+    let bound_video_channels = value_at_u64(&started, &["captureSession", "boundVideoChannels"]);
+    let bound_audio_endpoints = value_at_u64(&started, &["captureSession", "boundAudioEndpoints"]);
+    if require_av && bound_video_channels == 0 {
+        return Err("Desktop smoke requires at least one bound video channel.".to_string());
+    }
+    if require_av && bound_audio_endpoints == 0 {
+        return Err("Desktop smoke requires at least one bound audio endpoint.".to_string());
+    }
+
+    let video_consume = if bound_video_channels > 0 {
+        let video_id = native_worker_request_id("desktop-smoke-drain-video");
+        write_native_worker_request(
+            &mut worker.stdin,
+            &video_id,
+            "consumeVideoPayloadQueue",
+            json!({
+                "channelId": "field-camera",
+                "maxFrames": 1
+            }),
+        )?;
+        let value =
+            wait_native_worker_response(&worker.line_receiver, &video_id, Duration::from_secs(10))?;
+        if require_av && value_at_u64(&value, &["consumedFrames"]) == 0 {
+            return Err("Desktop smoke video drain consumed zero frames.".to_string());
+        }
+        value
+    } else {
+        Value::Null
+    };
+
+    let audio_consume = if bound_audio_endpoints > 0 {
+        let audio_id = native_worker_request_id("desktop-smoke-drain-audio");
+        write_native_worker_request(
+            &mut worker.stdin,
+            &audio_id,
+            "consumeAudioPayloadQueue",
+            default_native_worker_audio_payload_consume_params(),
+        )?;
+        let value =
+            wait_native_worker_response(&worker.line_receiver, &audio_id, Duration::from_secs(10))?;
+        if require_av && value_at_u64(&value, &["consumedPackets"]) == 0 {
+            return Err("Desktop smoke audio drain consumed zero packets.".to_string());
+        }
+        value
+    } else {
+        Value::Null
+    };
+
+    let status_id = native_worker_request_id("desktop-smoke-status");
+    write_native_worker_request(&mut worker.stdin, &status_id, "status", Value::Null)?;
+    let status =
+        wait_native_worker_response(&worker.line_receiver, &status_id, Duration::from_secs(10))?;
+
+    let stop_id = native_worker_request_id("desktop-smoke-stop");
+    write_native_worker_request(&mut worker.stdin, &stop_id, "stop", Value::Null)?;
+    let stopped =
+        wait_native_worker_response(&worker.line_receiver, &stop_id, Duration::from_secs(30))?;
+    let _ = write_native_worker_request(&mut worker.stdin, "shutdown", "shutdown", Value::Null);
+    let _ = worker.child.kill();
+    let _ = worker.child.wait();
+
+    if stopped.get("state").and_then(Value::as_str) != Some("idle") {
+        return Err("Desktop smoke Native Worker stop did not return idle.".to_string());
+    }
+
+    let finished_at = unix_timestamp_ms();
+    Ok(json!({
+        "status": "passed",
+        "schemaVersion": "smartst.desktop-smoke.v0.1",
+        "startedAtUnixMs": started_at,
+        "finishedAtUnixMs": finished_at,
+        "elapsedMs": finished_at.saturating_sub(started_at),
+        "requirePackaged": require_packaged,
+        "requireAv": require_av,
+        "readiness": readiness,
+        "devices": {
+            "source": devices.get("source").cloned().unwrap_or(Value::Null),
+            "videoCount": devices.get("video").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0),
+            "audioCount": devices.get("audio").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0),
+            "audioRenderCount": devices.get("audioRender").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0),
+            "diagnostics": devices.get("diagnostics").cloned().unwrap_or(Value::Null)
+        },
+        "session": {
+            "startedState": started.get("state").cloned().unwrap_or(Value::Null),
+            "stoppedState": stopped.get("state").cloned().unwrap_or(Value::Null),
+            "boundVideoChannels": bound_video_channels,
+            "boundAudioEndpoints": bound_audio_endpoints,
+            "videoConsumedFrames": value_at_u64(&video_consume, &["consumedFrames"]),
+            "videoConsumedBytes": value_at_u64(&video_consume, &["consumedBytes"]),
+            "audioConsumedPackets": value_at_u64(&audio_consume, &["consumedPackets"]),
+            "audioConsumedBytes": value_at_u64(&audio_consume, &["consumedBytes"]),
+            "statusState": status.get("state").cloned().unwrap_or(Value::Null),
+            "captureState": status.get("captureSession").and_then(|value| value.get("state")).cloned().unwrap_or(Value::Null)
+        }
+    }))
+}
+
+fn write_desktop_smoke_output(path: &Path, result: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create desktop smoke output directory {}: {error}",
+                parent.to_string_lossy()
+            )
+        })?;
+    }
+    let text = serde_json::to_string_pretty(result)
+        .map_err(|error| format!("Failed to serialize desktop smoke result: {error}"))?;
+    fs::write(path, text).map_err(|error| {
+        format!(
+            "Failed to write desktop smoke output {}: {error}",
+            path.to_string_lossy()
+        )
+    })
+}
+
+fn value_at_u64(value: &Value, path: &[&str]) -> u64 {
+    let mut current = value;
+    for key in path {
+        let Some(next) = current.get(*key) else {
+            return 0;
+        };
+        current = next;
+    }
+    current.as_u64().unwrap_or(0)
+}
+
+fn unix_timestamp_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
 fn native_worker_request_id(prefix: &str) -> String {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1979,6 +2178,40 @@ fn xml_unescape(input: &str) -> String {
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            if desktop_smoke_enabled() {
+                let app_handle = app.handle().clone();
+                thread::spawn(move || {
+                    let output_path = desktop_smoke_output_path();
+                    let smoke_result = match run_desktop_smoke(&app_handle) {
+                        Ok(result) => result,
+                        Err(error) => json!({
+                            "status": "failed",
+                            "schemaVersion": "smartst.desktop-smoke.v0.1",
+                            "error": error
+                        }),
+                    };
+                    let exit_code =
+                        if smoke_result.get("status").and_then(Value::as_str) == Some("passed") {
+                            0
+                        } else {
+                            1
+                        };
+                    if let Err(error) = write_desktop_smoke_output(&output_path, &smoke_result) {
+                        let fallback = json!({
+                            "status": "failed",
+                            "schemaVersion": "smartst.desktop-smoke.v0.1",
+                            "error": error
+                        });
+                        let _ = write_desktop_smoke_output(&output_path, &fallback);
+                        app_handle.exit(1);
+                        return;
+                    }
+                    app_handle.exit(exit_code);
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_default_paths,
             load_config,

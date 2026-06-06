@@ -924,34 +924,44 @@ npm run tauri:install-smoke
 - 如果发现现有 `SmartST Lite` 卸载注册项指向非测试目录，脚本会拒绝继续，避免误卸载正式安装。
 - 安装后验证 `smartst-lite.exe`、`bin\smartst-native-worker.exe`、`uninstall.exe`、HKCU 卸载项、桌面快捷方式、开始菜单快捷方式。
 - 直接启动安装目录 Worker 并执行 `worker.ready -> listDevices -> shutdown`。
-- 启动安装目录主程序，要求 5 秒后仍存活，并可通过窗口关闭请求正常退出。
+- 以 `SMARTST_DESKTOP_SMOKE=1` 启动安装目录主程序，并设置 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1`；安装版主程序必须自行解析 packaged Worker、枚举设备、启动默认会话、drain 1 帧视频、drain 5 个音频 packet、执行 `stop` 并写出 smoke JSON。
 - 执行 `uninstall.exe /S` 后验证安装目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均不存在。
 
 本机结果：
 
 ```text
 status=passed
-installDir=C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606151121
+installDir=C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606154025
 installExitCode=0
 uninstallExitCode=0
 installedWorkerSmoke.source=windows-native
 installedWorkerSmoke.videoCount=1
 installedWorkerSmoke.audioCount=1
 installedWorkerSmoke.audioRenderCount=1
-mainProcess.aliveAfter5s=true
-mainProcess.exitCode=0
-mainProcess.forceKilled=false
+desktopSmoke.exitCode=0
+desktopSmoke.status=passed
+desktopSmoke.launchMode=packaged
+desktopSmoke.devices.videoCount=1
+desktopSmoke.devices.audioCount=1
+desktopSmoke.devices.audioRenderCount=1
+desktopSmoke.session.boundVideoChannels=1
+desktopSmoke.session.boundAudioEndpoints=1
+desktopSmoke.session.videoConsumedFrames=1
+desktopSmoke.session.videoConsumedBytes=1382400
+desktopSmoke.session.audioConsumedPackets=5
+desktopSmoke.session.audioConsumedBytes=19200
+desktopSmoke.session.stoppedState=idle
 uninstallResiduals.installDirectoryExists=false
 uninstallResiduals.registryExists=false
 uninstallResiduals.desktopShortcutExists=false
 uninstallResiduals.startMenuShortcutExists=false
-followUpRegression=npm run test:all:poc passed in about 69.4s
+followUpRegression=npm run test:all:poc passed in about 69.3s
 ```
 
 边界：
 
-- 该脚本已覆盖本机 currentUser 静默安装、安装版 Worker 控制面、主程序启动和静默卸载残留检查。
-- 仍未覆盖干净 Windows 测试机、人工 UI 点击、LiveKit 房间连接、Native Worker 工作台按钮、录像链路或真实院内部署权限。
+- 该脚本已覆盖本机 currentUser 静默安装、安装版 Worker 控制面、安装版主程序内部 smoke、Native Worker start/drain/stop 基础链路和静默卸载残留检查。
+- 仍未覆盖干净 Windows 测试机、人工 UI 点击、LiveKit 房间连接、正式预览纹理、录像链路或真实院内部署权限。
 
 现场验证命令：
 

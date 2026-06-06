@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +28,7 @@ let uninstallAttempted = false;
 
 try {
   await cleanupExistingTestInstall();
+  cleanupSafeTestDirectories();
   await cleanupSafeShortcutLeftovers();
 
   const install = await runChecked(installerPath, ["/S", `/D=${installDir}`], { timeoutMs: 180000 });
@@ -45,7 +47,7 @@ try {
   assert(shortcutsAfterInstall.startMenu.exists, "Start Menu shortcut is missing after install");
 
   const installedWorkerSmoke = await smokeWorker(installedFiles.workerExe);
-  const mainProcess = await smokeMainProcess(installedFiles.mainExe);
+  const desktopSmoke = await smokeDesktopApp(installedFiles.mainExe);
 
   const uninstall = await runChecked(installedFiles.uninstallExe, ["/S"], { timeoutMs: 120000 });
   uninstallAttempted = true;
@@ -73,7 +75,7 @@ try {
     registryAfterInstall,
     shortcutsAfterInstall,
     installedWorkerSmoke,
-    mainProcess,
+    desktopSmoke,
     uninstallResiduals: {
       installDirectoryExists: existsSync(installDir),
       registryExists: Boolean(registryAfterUninstall),
@@ -128,6 +130,27 @@ async function cleanupExistingTestInstall() {
   if (existsSync(existingInstallLocation)) {
     rmSync(existingInstallLocation, { recursive: true, force: true });
   }
+}
+
+function cleanupSafeTestDirectories() {
+  for (const prefix of ["SmartSTLiteNsisSmoke-", "SmartSTLiteNsisTest-"]) {
+    const candidates = listLocalAppDataDirectories(prefix);
+    for (const candidate of candidates) {
+      if (isSafeTestInstallDir(candidate)) {
+        rmSync(candidate, { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+function listLocalAppDataDirectories(prefix) {
+  const output = requireChildPowerShell(
+    `Get-ChildItem $env:LOCALAPPDATA -Directory -Filter '${prefix}*' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName`,
+  );
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 async function cleanupSafeShortcutLeftovers() {
@@ -310,35 +333,70 @@ async function smokeWorker(workerPath) {
   }
 }
 
-async function smokeMainProcess(mainExe) {
-  const script = `
-$proc = Start-Process -FilePath $env:SMARTST_MAIN_EXE -PassThru
-Start-Sleep -Seconds 5
-$aliveAfter5s = -not $proc.HasExited
-$closeRequested = $false
-$forceKilled = $false
-if ($aliveAfter5s) {
-  $closeRequested = $proc.CloseMainWindow()
-  Start-Sleep -Seconds 2
-  if (-not $proc.HasExited) {
-    Stop-Process -Id $proc.Id -Force
-    $forceKilled = $true
+async function smokeDesktopApp(mainExe) {
+  const outputPath = join(
+    tmpdir(),
+    `smartst-desktop-smoke-${timestampForPath(new Date())}.json`,
+  );
+  const result = await run(mainExe, [], {
+    timeoutMs: 120000,
+    env: {
+      SMARTST_DESKTOP_SMOKE: "1",
+      SMARTST_DESKTOP_SMOKE_OUTPUT: outputPath,
+      SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED: "1",
+      SMARTST_DESKTOP_SMOKE_REQUIRE_AV: "1",
+    },
+  });
+
+  assert(existsSync(outputPath), `desktop smoke output is missing: ${outputPath}`);
+  const smoke = JSON.parse(readFileSync(outputPath, "utf8"));
+  if (result.exitCode !== 0 || smoke.status !== "passed") {
+    throw new Error(
+      `desktop smoke failed exit=${result.exitCode}: ${JSON.stringify(smoke)} stderr=${result.stderr}`,
+    );
   }
+
+  assert(smoke.readiness?.launchMode === "packaged", "desktop smoke did not use packaged Native Worker");
+  assert(smoke.session?.boundVideoChannels > 0, "desktop smoke did not bind a video channel");
+  assert(smoke.session?.boundAudioEndpoints > 0, "desktop smoke did not bind an audio endpoint");
+  assert(smoke.session?.videoConsumedFrames > 0, "desktop smoke did not drain a video frame");
+  assert(smoke.session?.audioConsumedPackets > 0, "desktop smoke did not drain audio packets");
+  assert(smoke.session?.stoppedState === "idle", "desktop smoke did not stop Native Worker session");
+
+  return {
+    mainExe,
+    exitCode: result.exitCode,
+    outputPath,
+    status: smoke.status,
+    launchMode: smoke.readiness.launchMode,
+    devices: smoke.devices,
+    session: smoke.session,
+  };
 }
-[PSCustomObject]@{
-  mainExe = $env:SMARTST_MAIN_EXE
-  processId = $proc.Id
-  aliveAfter5s = $aliveAfter5s
-  exitCode = $(if ($proc.HasExited) { $proc.ExitCode } else { $null })
-  closeRequested = $closeRequested
-  forceKilled = $forceKilled
-} | ConvertTo-Json -Compress
-`;
-  const output = await runPowerShell(script, { SMARTST_MAIN_EXE: mainExe }, { timeoutMs: 30000 });
-  const result = JSON.parse(output.stdout.trim());
-  assert(result.aliveAfter5s === true, "installed main process did not stay alive for 5 seconds");
-  assert(result.forceKilled === false, "installed main process required force kill");
-  return result;
+
+function requireChildPowerShell(script) {
+  const result = spawnSyncPowerShell(script);
+  if (result.exitCode !== 0) {
+    throw new Error(`PowerShell helper failed: ${result.stderr}`);
+  }
+  return result.stdout;
+}
+
+function spawnSyncPowerShell(script) {
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+  return {
+    exitCode: result.status ?? 0,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }
 
 async function waitForUninstallCleanup(directory, { timeoutMs }) {
