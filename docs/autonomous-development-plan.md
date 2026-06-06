@@ -152,7 +152,7 @@ package.json
 任务：
 
 - 根 `README.md` 改为新架构入口。
-- 保留 0.1.4 ONVIF/RTSP 历史能力说明，但降级为历史现状。
+- 不保留旧 0.1.4 ONVIF/RTSP UI 和旧 RTSP/HLS 预览代码；RTSP/SRT 后续按高级输入重新设计。
 - `package.json` description 和 keywords 改成 USB-first / LiveKit / surgery teaching。
 - 明确 `docs/README.md` 是当前文档入口。
 
@@ -180,7 +180,7 @@ package.json
 - 新增 `mediaTypes.ts`、`roomTypes.ts`、`endpointTypes.ts`。
 - 定义 `ClientType`、`RoomMode`、`VideoChannel`、`AcceptedCallMediaPolicy`、`ParticipantLimits`。
 - 写入 HMI CSS token。
-- 避免移除旧 `CameraConfig`，旧功能先兼容。
+- 旧 `CameraConfig` / ONVIF / RTSP-HLS 前端路径不再作为兼容负担；当前主线按 USB-first 通道模型推进。
 
 完成定义：
 

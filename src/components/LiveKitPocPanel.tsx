@@ -2,13 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { Link, RadioTower, ShieldCheck, Video } from "lucide-react";
 import {
   connectLiveKitPoc,
+  type LiveKitConnectionDraft,
   type LiveKitPocMode,
   type LiveKitPocSession,
   type LiveKitPocStatus,
   type LiveKitRemoteTrackInfo,
 } from "../services/livekitRoomService";
 
-export function LiveKitPocPanel() {
+interface LiveKitPocPanelProps {
+  connectionDraft?: LiveKitConnectionDraft;
+}
+
+export function LiveKitPocPanel({ connectionDraft }: LiveKitPocPanelProps) {
   const sessionRef = useRef<LiveKitPocSession | null>(null);
   const [serverUrl, setServerUrl] = useState("ws://127.0.0.1:7880");
   const [token, setToken] = useState("");
@@ -16,7 +21,9 @@ export function LiveKitPocPanel() {
   const [publishCamera, setPublishCamera] = useState(false);
   const [publishMicrophone, setPublishMicrophone] = useState(false);
   const [status, setStatus] = useState<LiveKitPocStatus>("idle");
-  const [message, setMessage] = useState("填写 LiveKit URL 和短期 JWT token 后可手动连接。");
+  const [message, setMessage] = useState(
+    "填写 LiveKit URL 和短期 JWT token 后可手动连接。",
+  );
   const [remoteTracks, setRemoteTracks] = useState<LiveKitRemoteTrackInfo[]>([]);
 
   const isConnected = status === "connected";
@@ -32,19 +39,42 @@ export function LiveKitPocPanel() {
     };
   }, []);
 
-  async function connect() {
+  useEffect(() => {
+    if (!connectionDraft) return;
+    setServerUrl(connectionDraft.serverUrl);
+    setToken(connectionDraft.token);
+    setMode(connectionDraft.mode);
+    setPublishCamera(connectionDraft.publishCamera === true);
+    setPublishMicrophone(connectionDraft.publishMicrophone === true);
+    setMessage(
+      `业务呼叫已接受：${connectionDraft.roomCode ?? "room"} / 默认轨道 ${
+        connectionDraft.defaultTrackName ?? "未返回"
+      }`,
+    );
+    void connectWithOptions(connectionDraft);
+  }, [connectionDraft?.id]);
+
+  async function connectWithOptions(options?: LiveKitConnectionDraft) {
     if (sessionRef.current) {
       await disconnect();
     }
 
+    const nextServerUrl = options?.serverUrl ?? serverUrl;
+    const nextToken = options?.token ?? token;
+    const nextMode = options?.mode ?? mode;
+    const nextPublishCamera =
+      options?.publishCamera ?? (canPublish && publishCamera);
+    const nextPublishMicrophone =
+      options?.publishMicrophone ?? (canPublish && publishMicrophone);
+
     setRemoteTracks([]);
     try {
       sessionRef.current = await connectLiveKitPoc({
-        serverUrl,
-        token,
-        mode,
-        publishCamera: canPublish && publishCamera,
-        publishMicrophone: canPublish && publishMicrophone,
+        serverUrl: nextServerUrl,
+        token: nextToken,
+        mode: nextMode,
+        publishCamera: nextMode === "interactive" && nextPublishCamera,
+        publishMicrophone: nextMode === "interactive" && nextPublishMicrophone,
         onStatus: (nextStatus, nextMessage) => {
           setStatus(nextStatus);
           if (nextMessage) setMessage(nextMessage);
@@ -68,6 +98,10 @@ export function LiveKitPocPanel() {
       setMessage(error instanceof Error ? error.message : "LiveKit 连接失败。");
       sessionRef.current = null;
     }
+  }
+
+  async function connect() {
+    await connectWithOptions();
   }
 
   async function disconnect() {
@@ -196,7 +230,8 @@ export function LiveKitPocPanel() {
           >
             <strong>{track.trackName || track.trackSid || "remote-track"}</strong>
             <span>
-              {track.participantIdentity} · {track.kind} · {track.source ?? "unknown"}
+              {track.participantIdentity} / {track.kind} /{" "}
+              {track.source ?? "unknown"}
             </span>
           </div>
         ))}

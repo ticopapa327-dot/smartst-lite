@@ -2,8 +2,6 @@ import {
   Clapperboard,
   LayoutDashboard,
   type LucideIcon,
-  MonitorPlay,
-  RadioTower,
   Settings,
   Stethoscope,
 } from "lucide-react";
@@ -34,18 +32,6 @@ const navItems: Array<{
     label: "手术室工作台",
     title: "进入 USB-first 手术室工作台",
     icon: LayoutDashboard,
-  },
-  {
-    view: "initiator",
-    label: "历史发起端",
-    title: "进入 0.1.4 ONVIF/RTSP 发起端",
-    icon: RadioTower,
-  },
-  {
-    view: "receiver",
-    label: "历史接收端",
-    title: "进入 0.1.4 接收端",
-    icon: MonitorPlay,
   },
   {
     view: "settings",

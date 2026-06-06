@@ -164,6 +164,22 @@ Desktop Client
 
 端口必须可配置。正式跨网或手机复杂网络场景，应使用 `wss://`、可信证书和 TURN/TLS。
 
+当前配置模板：
+
+| 角色 | 模板 |
+| --- | --- |
+| SmartST Server | `deploy/config/smartst-server.example.json` |
+| SmartST OR Agent | `deploy/config/smartst-or-agent.example.json` |
+| SmartST Desktop Client | `deploy/config/smartst-desktop-client.example.json` |
+
+配置模板必须通过：
+
+```powershell
+npm run service:config-preflight
+```
+
+该预检只验证配置边界和默认端口，不代表 Windows Service 已经安装完成。
+
 ## 6. 开发迁移路径
 
 当前仓库继续保留 PoC，但后续代码按目标目录演进：
@@ -203,6 +219,7 @@ infra/
 - OR Agent 能枚举采集设备并启动默认采集会话。
 - 示教室客户端可通过手术室电脑 IP 呼叫并进入 LiveKit room。
 - 手机 H5 可单向订阅默认画面，不能发布音视频或 data。
+- 多个手机 H5 观察者并发时，由 LiveKit/SFU 转发同一组 OR 轨道；OR Agent 不能按手机数量增加上行发布。
 - 本地录像不依赖 LiveKit room 存活。
 
 分机部署通过标准：

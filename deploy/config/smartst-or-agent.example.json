@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "smartst.or-agent.config.v0.1",
+  "role": "SmartST OR Agent",
+  "serverUrl": "http://<OR-PC-LAN-IP>:4780",
+  "controlApi": {
+    "host": "127.0.0.1",
+    "port": 4781
+  },
+  "nativeWorker": {
+    "executablePath": "C:\\Program Files\\SmartST\\or-agent\\smartst-native-worker.exe",
+    "launchMode": "service-managed",
+    "videoPayloadQueueCapacity": 3,
+    "audioPayloadQueueCapacity": 50
+  },
+  "channels": [
+    {
+      "id": "field-camera",
+      "displayName": "术野摄像机",
+      "role": "field",
+      "kind": "usb",
+      "localPrimary": true,
+      "remoteDefault": true,
+      "priority": 10
+    },
+    {
+      "id": "panorama",
+      "displayName": "全景摄像机",
+      "role": "panorama",
+      "kind": "usb",
+      "localPrimary": false,
+      "remoteDefault": false,
+      "priority": 20
+    },
+    {
+      "id": "endoscope",
+      "displayName": "腹腔镜 / 内镜",
+      "role": "endoscope",
+      "kind": "usb",
+      "localPrimary": false,
+      "remoteDefault": false,
+      "priority": 30
+    },
+    {
+      "id": "aux-device",
+      "displayName": "辅助医疗设备",
+      "role": "device",
+      "kind": "usb",
+      "localPrimary": false,
+      "remoteDefault": false,
+      "priority": 40
+    }
+  ],
+  "recording": {
+    "enabled": true,
+    "rootDirectory": "D:\\SmartSTRecordings",
+    "manifestSchema": "smartst.recording-manifest.v0.1"
+  }
+}

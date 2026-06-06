@@ -25,7 +25,15 @@
     "server:poc:real-token-smoke": "node server-poc/real-token-smoke.mjs",
     "server:poc:livekit-preflight": "node server-poc/livekit-preflight.mjs",
     "server:poc:livekit-preflight:smoke": "node server-poc/livekit-preflight-smoke.mjs",
+    "livekit:install-dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-livekit-dev.ps1",
+    "connectivity:or-lab:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-or-connectivity-lab.ps1",
+    "connectivity:or-lab:verify": "node scripts/or-connectivity-verify.mjs",
+    "connectivity:or-lab:media-smoke": "node scripts/livekit-media-smoke.mjs",
+    "connectivity:or-lab:or-agent-publisher-smoke": "node scripts/or-agent-publisher-adapter-smoke.mjs",
+    "connectivity:or-lab:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-or-connectivity-lab.ps1",
+    "service:config-preflight": "node scripts/service-config-preflight.mjs",
     "web-observer:poc:dev": "vite --host 127.0.0.1 --config web-observer-poc/vite.config.ts",
+    "web-observer:poc:dev:lan": "vite --host 0.0.0.0 --config web-observer-poc/vite.config.ts",
     "web-observer:poc:build": "tsc -p web-observer-poc/tsconfig.json && vite build --config web-observer-poc/vite.config.ts",
     "web-observer:poc:smoke": "node web-observer-poc/smoke.mjs",
     "media-worker:poc": "node media-worker-poc/worker.mjs",
@@ -75,7 +83,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "hls.js": "^1.6.16",
     "livekit-client": "^2.19.1",
     "livekit-server-sdk": "^2.15.4",
     "lucide-react": "^0.468.0",
@@ -83,6 +90,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@livekit/rtc-node": "^0.13.29",
     "@tauri-apps/cli": "^2.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

@@ -1,11 +1,10 @@
 import {
   LayoutDashboard,
-  MonitorPlay,
+  Laptop,
   RadioTower,
   ShieldCheck,
   Sparkles,
   Video,
-  Laptop,
 } from "lucide-react";
 import type { AppView } from "../domain/types";
 
@@ -71,26 +70,6 @@ export function StartupPage({ onChooseMode }: StartupPageProps) {
           <LayoutDashboard size={32} />
           <span>手术室工作台</span>
           <small>USB 采集、默认画面、呼叫策略</small>
-        </button>
-
-        <button
-          className="mode-tile initiator"
-          onClick={() => onChooseMode("initiator")}
-          type="button"
-        >
-          <RadioTower size={32} />
-          <span>历史发起端</span>
-          <small>0.1.4 ONVIF / RTSP 兼容入口</small>
-        </button>
-
-        <button
-          className="mode-tile receiver"
-          onClick={() => onChooseMode("receiver")}
-          type="button"
-        >
-          <MonitorPlay size={32} />
-          <span>历史接收端</span>
-          <small>0.1.4 本地接收状态入口</small>
         </button>
       </section>
     </div>

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppConfig, AppView, DefaultPaths } from "./domain/types";
 import { AppShell } from "./components/AppShell";
-import { InitiatorPage } from "./components/InitiatorPage";
-import { ReceiverPage } from "./components/ReceiverPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StartupPage } from "./components/StartupPage";
 import { WorkbenchPage } from "./components/WorkbenchPage";
@@ -84,20 +82,15 @@ export default function App() {
         <StartupPage onChooseMode={setActiveView} />
       )}
       {isReady && activeView === "workbench" && (
-        <WorkbenchPage organizationName={config.settings.organizationName} />
-      )}
-      {isReady && activeView === "initiator" && (
-        <InitiatorPage
-          config={config}
-          onConfigChange={changeConfig}
-          onLog={log}
-        />
-      )}
-      {isReady && activeView === "receiver" && (
-        <ReceiverPage
-          config={config}
-          onConfigChange={changeConfig}
-          onLog={log}
+        <WorkbenchPage
+          organizationName={config.settings.organizationName}
+          usbVideoChannelBindings={config.usbVideoChannelBindings}
+          onUsbVideoChannelBindingsChange={(bindings) =>
+            changeConfig((current) => ({
+              ...current,
+              usbVideoChannelBindings: bindings,
+            }))
+          }
         />
       )}
       {isReady && activeView === "settings" && (

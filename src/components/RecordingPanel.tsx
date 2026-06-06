@@ -52,4 +52,3 @@ export function RecordingPanel({ channels }: RecordingPanelProps) {
     </section>
   );
 }
-

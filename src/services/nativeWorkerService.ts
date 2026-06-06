@@ -1,4 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import type {
+  UsbVideoChannelBinding,
+  UsbVideoChannelBindings,
+} from "../domain/types";
 import { isTauriRuntime } from "./configService";
 
 export type NativeWorkerReadinessStatus =
@@ -26,9 +30,33 @@ export interface NativeWorkerReadiness {
 export interface NativeWorkerDeviceProbe {
   status: "ok" | "unavailable" | "desktop-only" | "error";
   readiness: NativeWorkerReadiness;
-  devices: unknown;
+  devices: NativeWorkerDevices | null;
   message: string;
 }
+
+export interface NativeWorkerDevice {
+  index?: number;
+  deviceId?: string;
+  nativeId?: string;
+  displayName?: string;
+  backend?: string;
+  role?: string;
+  state?: string;
+  transport?: string;
+}
+
+export interface NativeWorkerDevices {
+  source?: string;
+  video?: NativeWorkerDevice[];
+  audio?: NativeWorkerDevice[];
+  audioRender?: NativeWorkerDevice[];
+  diagnostics?: {
+    workerDeviceMode?: string;
+  };
+}
+
+export type NativeWorkerVideoChannelBinding = UsbVideoChannelBinding;
+export type NativeWorkerVideoChannelBindings = UsbVideoChannelBindings;
 
 export interface NativeWorkerSessionSnapshot {
   state?: string;
@@ -37,6 +65,7 @@ export interface NativeWorkerSessionSnapshot {
     boundVideoChannels?: number;
     boundAudioEndpoints?: number;
     continuousVideoThreadCount?: number;
+    videoChannelBindings?: NativeWorkerVideoChannelBindings;
   };
   channels?: unknown[];
   stats?: {
@@ -62,6 +91,7 @@ export interface NativeWorkerSessionSnapshot {
 
 export interface NativeWorkerStartParams {
   channels?: string[];
+  videoChannelBindings?: NativeWorkerVideoChannelBindings;
   videoMediaTypeIndex?: number;
   audioIndex?: number;
   startVideoThread?: boolean;

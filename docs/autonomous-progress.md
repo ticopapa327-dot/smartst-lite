@@ -357,11 +357,12 @@
   - start/status/stop 控制面已补充失败捕获、面板内错误提示、running/idle 按钮约束、绑定视频/音频数量、native 视频线程数、frameQueue push/drop、视频 native payload queue bytes/copy/consume 和音频 native PCM queue bytes/copy/consume 展示；该展示仍是控制面状态展示，不承载媒体 payload。
   - Tauri 持有的 Native Worker session 已增加 Drop 清理，runtime 释放时会尝试发送 `shutdown` 并 kill/wait 子进程，降低未点 `Stop` 直接退出时的残留进程风险。
   - 桌面发布打包阶段完成：`tauri:build:exe` 和 `tauri:build` 现会先构建 `native-worker/target/release/smartst-native-worker.exe`；Tauri `bundle.resources` 将 release Worker 安装为 `bin/smartst-native-worker.exe`；Tauri 后端启动顺序调整为 packaged Worker 优先、workspace debug Worker 次之、Cargo source fallback 最后；新增 `npm run media-worker:native:release-smoke`，可直接启动 `src-tauri/target/release/bin/smartst-native-worker.exe` 并完成 `worker.ready -> listDevices -> shutdown`；`cargo test --manifest-path src-tauri/Cargo.toml`、`npm run build`、`npm run tauri:build:exe`、`npm run media-worker:native:release-smoke`、`npm run tauri:build`、`npm run test:all:poc` 均通过，完整 PoC 回归耗时约 69.3 秒，NSIS 脚本确认包含 Worker 安装和卸载条目。
-  - NSIS 本机静默安装验证完成：执行 `SmartST Lite_0.1.4_x64-setup.exe /S /D=C:\Users\wangm\AppData\Local\SmartSTLiteNsisTest-20260606145018`，安装器退出码为 0；安装目录包含 `smartst-lite.exe`、`bin\smartst-native-worker.exe` 和 `uninstall.exe`；HKCU 卸载注册项、桌面快捷方式和开始菜单快捷方式已创建；直接启动安装目录 Worker 完成 `worker.ready -> listDevices -> shutdown`，返回 `source=windows-native`、`video=1/audio=1/render=1` 且 Media Foundation/WASAPI/WASAPI render 均为 `ok`；安装目录主程序启动 5 秒保持存活，发送关闭请求后退出码为 0。该项仍不是干净 Windows 测试机验收，未覆盖人工 UI 操作、LiveKit 房间连接、录像或卸载后残留检查。
-  - NSIS 安装/卸载自动化 smoke 完成：新增 `npm run tauri:install-smoke`，脚本只允许 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录，遇到非测试目录安装项会拒绝继续；本机执行通过，安装目录 `C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606151121`，安装/卸载退出码均为 0，安装版 Worker 返回 `source=windows-native`、`video=1/audio=1/render=1`，主程序 5 秒存活并正常关闭，静默卸载后安装目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均不存在；随后 `npm run test:all:poc` 完整回归通过，耗时约 69.4 秒。
-  - 安装版桌面内部 smoke 阶段完成：`npm run tauri:install-smoke` 现会以 `SMARTST_DESKTOP_SMOKE=1` 启动已安装的 `smartst-lite.exe`，并强制 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1`；本机执行通过，安装目录 `C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606154025`，安装版主程序确认 `launchMode=packaged`，设备数 `video=1/audio=1/render=1`，默认会话绑定 1 路视频和 1 路音频，drain 视频 1 帧/1382400 bytes、音频 5 个 packet/19200 bytes，`stoppedState=idle`，静默卸载后目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均无残留；随后 `npm run test:all:poc` 完整回归通过，耗时约 69.3 秒。
+  - NSIS 本机静默安装验证完成：执行 `SmartST Lite_0.1.4_x64-setup.exe /S /D=%LOCALAPPDATA%\SmartSTLiteNsisTest-<timestamp>`，安装器退出码为 0；安装目录包含 `smartst-lite.exe`、`bin\smartst-native-worker.exe` 和 `uninstall.exe`；HKCU 卸载注册项、桌面快捷方式和开始菜单快捷方式已创建；直接启动安装目录 Worker 完成 `worker.ready -> listDevices -> shutdown`，返回 `source=windows-native`、`video=1/audio=1/render=1` 且 Media Foundation/WASAPI/WASAPI render 均为 `ok`；安装目录主程序启动 5 秒保持存活，发送关闭请求后退出码为 0。该项仍不是干净 Windows 测试机验收，未覆盖人工 UI 操作、LiveKit 房间连接、录像或卸载后残留检查。
+  - NSIS 安装/卸载自动化 smoke 完成：新增 `npm run tauri:install-smoke`，脚本只允许 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录，遇到非测试目录安装项会拒绝继续；本机执行通过，安装目录 `%LOCALAPPDATA%\SmartSTLiteNsisSmoke-<timestamp>`，安装/卸载退出码均为 0，安装版 Worker 返回 `source=windows-native`、`video=1/audio=1/render=1`，主程序 5 秒存活并正常关闭，静默卸载后安装目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均不存在；随后 `npm run test:all:poc` 完整回归通过，耗时约 69.4 秒。
+  - 安装版桌面内部 smoke 阶段完成：`npm run tauri:install-smoke` 现会以 `SMARTST_DESKTOP_SMOKE=1` 启动已安装的 `smartst-lite.exe`，并强制 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1`；本机执行通过，安装目录 `%LOCALAPPDATA%\SmartSTLiteNsisSmoke-<timestamp>`，安装版主程序确认 `launchMode=packaged`，设备数 `video=1/audio=1/render=1`，默认会话绑定 1 路视频和 1 路音频，drain 视频 1 帧/1382400 bytes、音频 5 个 packet/19200 bytes，`stoppedState=idle`，静默卸载后目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均无残留；随后 `npm run test:all:poc` 完整回归通过，耗时约 69.3 秒。
   - 真实 LiveKit preflight 阶段新增 `npm run server:poc:livekit-preflight` 和 `npm run server:poc:livekit-preflight:smoke`：主脚本读取服务端 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET`，使用 RoomService 创建/查询/删除唯一测试 room，并通过业务服务为同一 room 签发 OR host 和手机观察端真实 JWT；smoke 已加入 `npm run test:all:poc`，在无凭据环境验证返回 `missing-livekit-env` 阻塞而不是误报通过。本机当前未设置真实 `LIVEKIT_*`，真实 LiveKit server 连通性尚未完成；本轮执行 `server:poc:livekit-preflight:smoke` 通过，直接执行 `server:poc:livekit-preflight` 按预期 blocked，`npm run test:all:poc` 完整回归通过，耗时约 69.9 秒。
   - 三包部署标准阶段完成文档调整：新增 `docs/deployment-package-split.md`，确认后续按 `SmartST Server`、`SmartST OR Agent`、`SmartST Desktop Client` 三个部署单元推进；三者可以同装在手术室电脑，也可以分机部署，但必须保持进程、权限、配置、API secret、Windows Service 和升级边界分离。已同步根 README、架构文档、可行性文档、开发计划、启动基线、测试计划和下一阶段记录。
+  - 一体机真实连通性最小联调完成：新增 `docs/real-connectivity-lab.md`、`scripts/install-livekit-dev.ps1`、`scripts/start-or-connectivity-lab.ps1`、`scripts/or-connectivity-verify.mjs`、`scripts/stop-or-connectivity-lab.ps1` 和 npm 脚本 `livekit:install-dev`、`connectivity:or-lab:start/verify/stop`；从 LiveKit 官方 GitHub release 下载 `v1.12.0` Windows AMD64 二进制到 `runtime/livekit/` 并完成 SHA-256 校验；本机无 Docker，采用 `livekit-server.exe` 直接运行；联调地址为 `LiveKit ws://<OR-PC-LAN-IP>:7880`、`Business http://<OR-PC-LAN-IP>:4780`、`H5 http://<OR-PC-LAN-IP>:5175`，最新 roomCode=`ST-LAB-<timestamp>`；`connectivity:or-lab:verify` 通过，业务服务为 OR host、示教室仅收看、示教室交互和手机 observer 签发真实 JWT，手机 observer 仍为 `canPublish=false`、`canPublishData=false`；`server:poc:livekit-preflight` 对同一 LiveKit 实例通过；`web-observer:poc:build`、`web-observer:poc:smoke`、`server:poc:livekit-preflight:smoke` 和 `npm run test:all:poc` 均通过，完整回归耗时约 70.2 秒；当前仍未完成桌面端实际入会、摄像头/麦克风发布、示教室订阅、双向语音和手机跨设备实测。
 - 阻塞：
   - 当前 4 路摄像头基础链路可打开，但不满足 4 路 30fps 实时验收；按当前阶段决策，该性能降级只记录为开发机限制，不阻塞后续 Native Worker 开发。
   - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。
@@ -369,3 +370,95 @@
   - 先固化 `packages/contracts` 或等价共享合同，覆盖 endpoint、room、mediaPolicy、token grants、agent status、recording status。
   - 将 `server-poc` 演进为 SmartST Server 原型，并准备本机 LiveKit 配置、API secret 存储、RoomService preflight 和 Windows Service 安装边界。
   - 将 Tauri 后端中的 Native Worker 管理能力抽象为 SmartST OR Agent API，再继续推进真实 LiveKit 房间、4 路硬件递增验证、重采样/AEC、预览、发布和录像消费者接入。
+
+## 3-5 连通性、服务化和验证文档补齐
+
+- 状态：done
+- 执行时间：2026-06-06
+- 修改文件：
+  - `package.json`
+  - `package-lock.json`
+  - `scripts/livekit-media-smoke.mjs`
+  - `scripts/service-config-preflight.mjs`
+  - `deploy/config/smartst-server.example.json`
+  - `deploy/config/smartst-or-agent.example.json`
+  - `deploy/config/smartst-desktop-client.example.json`
+  - `deploy/windows-service/README.md`
+  - `docs/real-connectivity-lab.md`
+  - `docs/real-connectivity-acceptance-checklist.md`
+  - `docs/test-plan.md`
+  - `docs/deployment-package-split.md`
+  - `docs/next-stage-real-livekit-native-usb.md`
+- 已完成：
+  - 新增 `npm run connectivity:or-lab:media-smoke`，使用真实 LiveKit room、真实业务服务 token 和 synthetic OR publisher 验证媒体转发。
+  - media smoke 已验证 `video:field-camera` 和 `audio:or-room` 可被示教室订阅者和 3 个手机 observer 接收；非 OR 参与者发布轨道数为 0。
+  - 新增三包配置模板和 `npm run service:config-preflight`，确认 API secret 只属于 SmartST Server，OR Agent 和 Desktop Client 不保存 LiveKit API secret。
+  - 补齐真实连通性部署说明、防火墙端口、LiveKit/TURN/媒体转发配置、失败排查表和最小验收表。
+- 验证：
+  - `npm run service:config-preflight`：通过。
+  - `npm run connectivity:or-lab:verify`：通过，最新 roomCode=`ST-LAB-<timestamp>`。
+  - `npm run connectivity:or-lab:media-smoke`：通过，最新 media roomCode=`ST-MEDIA-<timestamp>`。
+  - `node --check scripts/livekit-media-smoke.mjs`、`node --check scripts/service-config-preflight.mjs`：通过。
+  - `npm run web-observer:poc:smoke`：通过。
+  - `npm run test:all:poc`：通过，完整回归耗时约 68.5 秒。
+- 边界：
+  - 当前 media smoke 是 synthetic publisher，不代表真实 OR Agent 已经完成 USB 摄像头、采集卡或麦克风发布。
+  - 当前 Windows Service 是配置模板和预检，不是已安装服务。
+
+## OR Agent publisher adapter 与 Desktop Client 业务呼叫闭环
+
+- 状态：done
+- 执行时间：2026-06-06
+- 修改文件：
+  - `package.json`
+  - `scripts/or-agent-publisher-adapter-smoke.mjs`
+  - `src/services/businessService.ts`
+  - `src/services/livekitRoomService.ts`
+  - `src/components/CallPanel.tsx`
+  - `src/components/LiveKitPocPanel.tsx`
+  - `src/components/WorkbenchPage.tsx`
+  - `src/styles.css`
+  - `docs/real-connectivity-lab.md`
+  - `docs/real-connectivity-acceptance-checklist.md`
+  - `docs/test-plan.md`
+  - `docs/next-stage-real-livekit-native-usb.md`
+- 已完成：
+  - 新增 `npm run connectivity:or-lab:or-agent-publisher-smoke`。
+  - 该 smoke 通过业务服务注册手术室端和示教室端，示教室发起呼叫，手术室接受后创建 room 和短期 token。
+  - OR publisher adapter 启动 Native Worker，绑定 1 路 Media Foundation 视频和 1 路 WASAPI 音频，通过 PPM/WAV 文件桥接把真实 payload queue 样本发布到 LiveKit。
+  - Desktop teaching subscriber 通过业务服务 token 入会，收到 `video:field-camera` 和 `audio:or-room`；手机 observer 只订阅且不能发布；非 OR 发布轨道数为 0。
+  - 工作台 `CallPanel` 已接入业务服务呼叫流程，点击“呼叫并入会”后自动把示教端 token 交给 LiveKit 面板连接。
+- 验证：
+  - `node --check scripts/or-agent-publisher-adapter-smoke.mjs`：通过。
+  - `npm run connectivity:or-lab:or-agent-publisher-smoke`：通过，roomCode=`ST-ORPUB-<timestamp>`，发布 13 帧视频、15 个音频 frame、150 个音频 packet。
+  - `npm run build`：通过。
+  - `npm run test:all:poc`：通过，完整回归耗时约 68.8 秒。
+- 边界：
+  - 当前发布 adapter 是文件桥接 smoke，不是生产级无文件发布链路。
+  - 当前 Desktop Client UI 已接业务呼叫合同，但尚未做两台真实桌面终端的人工呼叫、同意、双向语音 30 分钟验收。
+
+### 当前主线清理
+
+- 执行旧版和无效代码清理：移除旧 `InitiatorPage`、`ReceiverPage`、`CameraDialog`、`VideoPane`、`cameraService`、`previewService`、`realtimeService`，Desktop Client 仅保留启动页、手术室工作台和设置页入口。
+- 移除旧 RTSP/HLS 前端预览依赖 `hls.js`。
+- 移除 Tauri 后端中仅服务旧页面的 ONVIF discovery、ONVIF GetStreamUri、RTSP -> HLS 预览、本地 HLS HTTP server 和 FFmpeg 查找逻辑，同时移除 `base64`、`get_if_addrs`、`sha1`、`time`、`tiny_http` 直接依赖。
+- 当前 RTSP/SRT/ONVIF 只作为后续高级输入方向保留在架构文档中，不再作为当前产品默认入口或遗留兼容代码。
+- 清理后验证：`cargo check --manifest-path src-tauri/Cargo.toml` 通过；`cargo test --manifest-path src-tauri/Cargo.toml` 6/6 通过；`npm run build` 通过；`npm run test:all:poc` 通过，完整回归约 68.6s；`npm run service:config-preflight` 通过；`npm run connectivity:or-lab:or-agent-publisher-smoke` 通过，最新 roomCode=`ST-ORPUB-<timestamp>`；`npm run tauri:install-smoke` 通过，安装包 `src-tauri\target\release\bundle\nsis\SmartST Lite_0.1.4_x64-setup.exe`，安装版 Worker 和 Desktop smoke 均通过，静默卸载无残留。
+
+### USB 摄像机配置入口补齐
+
+- 执行时间：2026-06-06。
+- 问题：当前运行代码已移除旧 RTSP/ONVIF/HLS 摄像机接入入口，但工作台仍没有可见的 USB 摄像机/采集卡通道配置；Native Worker 虽已支持 `videoChannelBindings`，Desktop Client 未暴露给用户。
+- 已完成：
+  - 新增 `src/components/UsbVideoConfigPanel.tsx`，工作台显示“USB 摄像机配置”，支持探测 Native Worker Media Foundation 视频设备，并按全景、术野、内镜、辅助医疗设备等通道选择 USB 设备。
+  - `AppConfig` 新增 `usbVideoChannelBindings`，通道到设备的 `index/deviceId/nativeId/displayNameContains` 绑定会随配置保存，不再只依赖设备枚举顺序。
+  - `NativeWorkerPanel` 启动 session 时使用当前启用通道和已保存的 `videoChannelBindings`，不再硬编码只启动 `field-camera/endoscope`。
+  - 文档中明显过时的“当前基线已有 ONVIF/RTSP MVP”和旧组件树 `ReceiverPage.tsx` 已修正；RTSP/SRT 仅作为后续高级输入适配器，不作为当前默认入口。
+- 验证：
+  - `npm run build`：通过。
+  - `cargo check --manifest-path src-tauri\Cargo.toml`：通过。
+  - `cargo test --manifest-path src-tauri\Cargo.toml`：6/6 通过。
+  - `npm run service:config-preflight`：通过。
+  - `npm run test:all:poc`：通过，完整回归约 69.7s。
+  - `git diff --check`：无空白错误，仅有既有 LF/CRLF 提示。
+- 边界：该配置入口完成了 USB 设备枚举、绑定保存和 Native Worker 启动参数接入；尚未实现真实预览纹理、设备热插拔提示、同型号采集卡重命名向导、PTZ 能力探测或正式录像链路。

@@ -27,6 +27,20 @@ Default URL:
 http://127.0.0.1:4780
 ```
 
+LAN test mode for a surgical-room all-in-one machine:
+
+```powershell
+$env:SMARTST_POC_HOST="0.0.0.0"
+$env:SMARTST_POC_PORT="4780"
+$env:LIVEKIT_TOKEN_MODE="real"
+$env:LIVEKIT_URL="ws://<OR-PC-LAN-IP>:7880"
+$env:LIVEKIT_API_KEY="<server-side-key>"
+$env:LIVEKIT_API_SECRET="<server-side-secret>"
+npm run server:poc
+```
+
+Use `npm run connectivity:or-lab:start` for the full local LiveKit + business service + H5 observer lab startup.
+
 ## Smoke Test
 
 ```powershell

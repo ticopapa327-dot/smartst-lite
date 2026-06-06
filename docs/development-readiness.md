@@ -52,7 +52,7 @@ Android 会议平板客户端
 
 | 文档 | 当前用途 | 开发阶段地位 |
 | --- | --- | --- |
-| `README.md` | 0.1.4 ONVIF/RTSP MVP 历史说明 | 仅作现状参考，不能作为新架构开发依据 |
+| `README.md` | 当前 USB-first 主线入口 | 作为仓库当前代码和验证入口 |
 | `docs/usb-first-rearchitecture.md` | USB-first 重构方向 | 架构转向依据 |
 | `docs/deployment-package-split.md` | Server / OR Agent / Desktop Client 三包标准 | 安装器、服务化和部署边界主文档 |
 | `docs/livekit-desktop-surgery-teaching-architecture.md` | 完整功能架构 | 产品和系统架构主文档 |
@@ -151,7 +151,7 @@ infra/windows-service
 - 更新 `package.json` 描述和 keywords。
 - 新增 shared contracts 初稿：终端类型、房间模式、默认画面、token 权限。
 - 建立 UI token：冷灰蓝 HMI palette，不另起大面积蓝色科技屏风格。
-- 保留旧 ONVIF/RTSP 功能，但从主 UI 路线移出或标记为高级兼容。
+- 清理旧 ONVIF/RTSP UI 和旧 Tauri 预览命令；RTSP/SRT 后续按高级输入重新设计。
 
 验收：
 

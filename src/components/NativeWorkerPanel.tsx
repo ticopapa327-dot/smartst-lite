@@ -1,5 +1,6 @@
 import { Activity, Cpu, Mic, RefreshCw, Video, Volume2 } from "lucide-react";
 import { useState } from "react";
+import type { VideoChannel } from "../domain/mediaTypes";
 import {
   consumeNativeWorkerAudioPayloadQueue,
   consumeNativeWorkerVideoPayloadQueue,
@@ -8,21 +9,25 @@ import {
   startNativeWorkerSession,
   stopNativeWorkerSession,
   type NativeWorkerDeviceProbe,
+  type NativeWorkerDevices,
   type NativeWorkerPayloadConsumeResult,
   type NativeWorkerSessionSnapshot,
+  type NativeWorkerVideoChannelBindings,
 } from "../services/nativeWorkerService";
 
-interface NativeWorkerDeviceSnapshot {
-  source?: string;
-  video?: unknown[];
-  audio?: unknown[];
-  audioRender?: unknown[];
-  diagnostics?: {
-    workerDeviceMode?: string;
-  };
+interface NativeWorkerPanelProps {
+  channels: VideoChannel[];
+  videoChannelBindings: NativeWorkerVideoChannelBindings;
+  deviceProbe?: NativeWorkerDeviceProbe | null;
+  onDeviceProbe?: (probe: NativeWorkerDeviceProbe) => void;
 }
 
-export function NativeWorkerPanel() {
+export function NativeWorkerPanel({
+  channels,
+  videoChannelBindings,
+  deviceProbe,
+  onDeviceProbe,
+}: NativeWorkerPanelProps) {
   const [probe, setProbe] = useState<NativeWorkerDeviceProbe | null>(null);
   const [session, setSession] = useState<NativeWorkerSessionSnapshot | null>(null);
   const [videoPayloadConsume, setVideoPayloadConsume] = useState<NativeWorkerPayloadConsumeResult | null>(null);
@@ -32,12 +37,13 @@ export function NativeWorkerPanel() {
   const [probeError, setProbeError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
-  const devices = (probe?.devices ?? null) as NativeWorkerDeviceSnapshot | null;
+  const effectiveProbe = deviceProbe ?? probe;
+  const devices = (effectiveProbe?.devices ?? null) as NativeWorkerDevices | null;
   const videoCount = Array.isArray(devices?.video) ? devices.video.length : 0;
   const audioCount = Array.isArray(devices?.audio) ? devices.audio.length : 0;
   const audioRenderCount = Array.isArray(devices?.audioRender) ? devices.audioRender.length : 0;
-  const source = devices?.source ?? probe?.status ?? "not-probed";
-  const workerMode = devices?.diagnostics?.workerDeviceMode ?? probe?.readiness.status ?? "unknown";
+  const source = devices?.source ?? effectiveProbe?.status ?? "not-probed";
+  const workerMode = devices?.diagnostics?.workerDeviceMode ?? effectiveProbe?.readiness.status ?? "unknown";
   const sessionState = session?.captureSession?.state ?? session?.state ?? "idle";
   const isSessionRunning = sessionState === "running";
   const boundVideoChannels = session?.captureSession?.boundVideoChannels ?? 0;
@@ -65,6 +71,7 @@ export function NativeWorkerPanel() {
     try {
       const nextProbe = await probeNativeWorkerDevices();
       setProbe(nextProbe);
+      onDeviceProbe?.(nextProbe);
       if (nextProbe.status === "error" || nextProbe.status === "unavailable") {
         setProbeError(nextProbe.message);
       }
@@ -81,9 +88,18 @@ export function NativeWorkerPanel() {
     setVideoPayloadConsume(null);
     setAudioPayloadConsume(null);
     try {
+      const enabledChannelIds = channels
+        .filter((channel) => channel.enabled)
+        .map((channel) => channel.id);
+      const explicitBindings =
+        Object.keys(videoChannelBindings).length > 0
+          ? videoChannelBindings
+          : undefined;
+
       setSession(
         await startNativeWorkerSession({
-          channels: ["field-camera", "endoscope"],
+          channels: enabledChannelIds.length > 0 ? enabledChannelIds : ["field-camera"],
+          videoChannelBindings: explicitBindings,
           videoMediaTypeIndex: 0,
           audioIndex: 0,
           startVideoThread: true,
@@ -189,7 +205,7 @@ export function NativeWorkerPanel() {
         <div className="recording-stat">
           <Cpu size={18} />
           <strong>{source}</strong>
-          <span>{probe?.message ?? "No device probe has run"}</span>
+          <span>{effectiveProbe?.message ?? "No device probe has run"}</span>
         </div>
         <div className="recording-stat">
           <Video size={18} />

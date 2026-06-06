@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "smartst.server.config.v0.1",
+  "role": "SmartST Server",
+  "listen": {
+    "host": "0.0.0.0",
+    "businessPort": 4780
+  },
+  "livekit": {
+    "serverExecutable": "C:\\Program Files\\SmartST\\server\\livekit-server.exe",
+    "publicUrl": "ws://<OR-PC-LAN-IP>:7880",
+    "apiHost": "http://127.0.0.1:7880",
+    "apiKeyEnv": "LIVEKIT_API_KEY",
+    "apiSecretEnv": "LIVEKIT_API_SECRET",
+    "udpMuxPort": 7882,
+    "iceTcpPort": 7881,
+    "developmentMode": false
+  },
+  "roomPolicy": {
+    "defaultChannelId": "field-camera",
+    "publishOtherChannelsOnDemand": true,
+    "maxInteractiveParticipants": 4,
+    "maxTabletClients": 2,
+    "maxWebObservers": 10
+  },
+  "observerPolicy": {
+    "enabled": true,
+    "mode": "watch-only",
+    "allowPublishAudio": false,
+    "allowPublishVideo": false,
+    "allowPublishData": false,
+    "defaultRoute": "/observer"
+  },
+  "audit": {
+    "logDirectory": "C:\\ProgramData\\SmartST\\server\\logs",
+    "redactPatientFields": true,
+    "redactSecrets": true
+  }
+}

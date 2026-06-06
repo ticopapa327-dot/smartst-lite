@@ -12,12 +12,7 @@ export const defaultSettings = {
 
 export const defaultConfig: AppConfig = {
   settings: defaultSettings,
-  cameras: [],
-  recentConnections: [],
-  roomSession: {
-    roomCode: "",
-    status: "idle",
-  },
+  usbVideoChannelBindings: {},
 };
 
 export function isTauriRuntime(): boolean {
@@ -85,11 +80,37 @@ function normalizeConfig(config: Partial<AppConfig>): AppConfig {
       ...defaultSettings,
       ...(config.settings ?? {}),
     },
-    cameras: (config.cameras ?? []).slice(0, 2),
-    recentConnections: (config.recentConnections ?? []).slice(0, 8),
-    roomSession: {
-      ...defaultConfig.roomSession,
-      ...(config.roomSession ?? {}),
-    },
+    usbVideoChannelBindings: normalizeUsbVideoChannelBindings(
+      config.usbVideoChannelBindings,
+    ),
   };
+}
+
+function normalizeUsbVideoChannelBindings(
+  bindings: AppConfig["usbVideoChannelBindings"] | undefined,
+): AppConfig["usbVideoChannelBindings"] {
+  if (!bindings || typeof bindings !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(bindings)
+      .filter(([channelId, binding]) => channelId.trim() && binding)
+      .map(([channelId, binding]) => [
+        channelId,
+        {
+          ...(typeof binding.index === "number" ? { index: binding.index } : {}),
+          ...(typeof binding.deviceId === "string" && binding.deviceId.trim()
+            ? { deviceId: binding.deviceId.trim() }
+            : {}),
+          ...(typeof binding.nativeId === "string" && binding.nativeId.trim()
+            ? { nativeId: binding.nativeId.trim() }
+            : {}),
+          ...(typeof binding.displayNameContains === "string" &&
+          binding.displayNameContains.trim()
+            ? { displayNameContains: binding.displayNameContains.trim() }
+            : {}),
+        },
+      ]),
+  );
 }

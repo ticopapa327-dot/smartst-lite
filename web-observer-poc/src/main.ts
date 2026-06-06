@@ -49,6 +49,8 @@ let livekitRoom: Room | null = null;
 let preferredTrackName = "";
 let mountedVideoKey = "";
 
+serviceUrlInput.value = defaultServiceUrl(serviceUrlInput.value);
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   void enterObserverRoom();
@@ -282,6 +284,17 @@ function trackKey(publication: RemoteTrackPublication, participant: RemotePartic
 
 function normalizeBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, "");
+}
+
+function defaultServiceUrl(currentValue: string) {
+  const current = currentValue.trim();
+  const host = window.location.hostname;
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  const isLocalhost = host === "127.0.0.1" || host === "localhost" || host === "";
+  if (!isLocalhost && (!current || current.includes("127.0.0.1") || current.includes("localhost"))) {
+    return `${protocol}//${host}:4780`;
+  }
+  return current;
 }
 
 function createId() {

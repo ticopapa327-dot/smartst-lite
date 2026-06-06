@@ -1,67 +1,54 @@
 # SmartST Lite 文档入口
 
-本文档目录记录新一阶段手术示教软件开发依据。根目录 `README.md` 目前仍保留 0.1.4 ONVIF/RTSP MVP 的历史说明，不能单独作为新架构开发依据。
+本文档目录记录当前 USB-first 手术示教软件主线。根目录 `README.md` 已改为当前代码入口，不再保留旧版 ONVIF/RTSP 主流程说明。
 
 ## 阅读顺序
 
-1. `development-readiness.md`  
-   开发启动入口，说明当前基线、文档关系、模块划分、Sprint 0 到 Sprint 5。
-
-2. `autonomous-development-plan.md`  
-   无人值守开发执行计划，定义 AD-00 到 AD-09 批次、验证命令、停止条件和进度记录方式。
-
-3. `livekit-desktop-surgery-teaching-architecture.md`  
-   产品功能架构，包含手术室端、示教室端、Android 会议平板、手机 H5、默认画面、权限、录像、HIS、AI 预留。
-
-4. `livekit-native-media-worker-service-feasibility.md`  
-   技术可行性，重点是 LiveKit + Native Media Worker + 业务服务的职责边界、PoC 和 Go / No-Go。
-
-5. `ui-visual-style.md`  
-   UI 配色和视觉 token。界面必须参考 `shoushi-or-platform` 的 `or-preview HMI palette v0.3`。
-
-6. `livekit-desktop-surgery-teaching-development-plan.md`  
-   阶段计划、验收标准、测试矩阵。
-
-7. `usb-first-rearchitecture.md`  
-   USB-first 重构背景和旧 ONVIF/RTSP 主线降级依据。
-
-8. `recording-manifest.md`  
-   录像文件 manifest v0.1 合同，说明患者绑定、通道文件、导出、FTP 状态和 AI 预留接口。
-
-9. `test-plan.md`  
+1. `development-readiness.md`
+   当前基线、架构决策、模块划分和阶段计划。
+2. `deployment-package-split.md`
+   SmartST Server、SmartST OR Agent、SmartST Desktop Client 三包部署和服务化边界。
+3. `livekit-desktop-surgery-teaching-architecture.md`
+   产品功能架构、默认画面、权限、手机 H5、Android 平板、录像、HIS 和 AI 预留。
+4. `livekit-native-media-worker-service-feasibility.md`
+   LiveKit + Native Media Worker + 业务服务的可行性和职责边界。
+5. `next-stage-real-livekit-native-usb.md`
+   真实 LiveKit、Native Worker、USB 硬件验证阶段记录。
+6. `real-connectivity-lab.md`
+   本机一体机真实连通性部署、端口、防火墙、LiveKit/TURN 和排查说明。
+7. `real-connectivity-acceptance-checklist.md`
+   最小验收清单。
+8. `test-plan.md`
    当前 PoC 到院内试点的测试分层、停止条件和执行计划。
+9. `ui-visual-style.md`
+   界面配色和 HMI 视觉约束。
+10. `recording-manifest.md`
+    录像文件 manifest 合同。
 
-10. `poc-baseline-freeze.md`  
-    AD-00 到 AD-09 暂停无人值守开发后的成果固化记录。
-
-11. `next-stage-real-livekit-native-usb.md`  
-    真实 LiveKit JWT、Native Worker 就绪检查和 4 路 USB 硬件验证阶段记录。
-
-## 当前开发主线
+## 当前主线
 
 ```text
 USB 采集优先
 LiveKit/SFU 实时互动
 Native Media Worker 本地采集和录像
-业务服务统一权限和呼叫
-Android 会议平板作为正式客户端
+业务服务统一权限、呼叫、token 和审计
 手机 H5 仅单向收看
+Android 会议平板作为正式客户端规划
 冷灰蓝 HMI 医疗设备控制屏视觉
-无人值守批次化开发
-```
-
-当前 AD-00 到 AD-09 PoC 状态见 `autonomous-progress.md`。
-
-当前固化基线验证入口：
-
-```powershell
-npm run test:all:poc
 ```
 
 ## 非主线
 
-- ONVIF/RTSP 不再作为默认接入流程。
+- ONVIF/RTSP 不再作为默认接入流程；旧 UI 和旧 Tauri 命令已从当前代码移除。
 - 手机端不安装客户端，不做交互。
 - 手机并发不由手术室终端承担。
 - WebView2 `MediaRecorder` 不作为正式录像方案。
-- 不使用大面积蓝色、紫蓝渐变、霓虹发光、玻璃拟态、BI 驾驶舱式视觉。
+- 不使用大面积蓝色、紫蓝渐变、霓虹发光、玻璃拟态或 BI 驾驶舱式视觉。
+
+## 固化验证入口
+
+```powershell
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+npm run test:all:poc
+```

@@ -19,7 +19,7 @@
 
 - 命令：`npm run test:all:poc`
 - 结果：通过，耗时约 69.1 秒。
-- 剩余警告：本轮桌面端和 web-observer Vite 构建无 chunk warning；LiveKit/HLS 大依赖已拆为按需 vendor chunk。
+- 剩余警告：本轮桌面端和 web-observer Vite 构建无 chunk warning；LiveKit 大依赖已拆为按需 vendor chunk，旧 RTSP/HLS 前端预览依赖已清理。
 
 ## 2. LiveKit JWT 签发
 
@@ -123,7 +123,7 @@ npm run media-worker:native-readiness:smoke
 - 已新增 `npm run media-worker:native:audio-call-drain`，周期性 drain native PCM packet 队列，模拟音频通话或 publisher 消费者并验证 sequence 单调递增、消费字节计数、`payloadTransport=native-only` 和 `exportedOverJson=false`。
 - 已新增 `npm run media-worker:native:interaction-drain`，在同一 Native Worker session 内同时启动视频和音频，并周期性 drain 两路 native queue，模拟交互连接的基础消费者控制链路。
 - 已新增 `npm run media-worker:native:av-soak`，默认 5 秒持续采集音视频、周期性 status 采样和 native queue drain，写入 `smartst.native-av-soak.v0.1` 摘要，用于连续采集/消费者在场/队列有界的短时基线验证。
-- 已完成前端构建 code split：Workbench 对 `LiveKitPocPanel` 使用 lazy import，RTSP/HLS 预览对 `hls.js` 使用按需 import，Vite 将 `livekit`、`hls`、`react-vendor`、`icons` 拆为独立 chunk，桌面端主工作台 chunk 约 46.3 kB。
+- 已完成前端构建 code split：Workbench 对 `LiveKitPocPanel` 使用 lazy import，旧 RTSP/HLS 前端预览和 `hls.js` 依赖已清理，Vite 仅保留 `livekit`、`react-vendor`、`icons` 等当前主线 chunk。
 - 已完成业务服务默认画面合同：`server-poc` 在 `accept call` 和 `room create` 统一生成 `mediaPolicy`，支持 `manual-accept/local-primary/remote-default/priority/audio-only` 选择原因，并同步写入 token response metadata 与真实 LiveKit JWT metadata。
 - 已新增 Node-side Native export artifact manifest smoke，读取 PGM/PPM/WAV 导出文件，默认校验产物 mtime 在 300000ms 内，并写入 `smartst.native-export-artifacts.v0.1` JSON 清单。
 
@@ -919,7 +919,7 @@ npm run test:all:poc
 
 - 使用 `SmartST Lite_0.1.4_x64-setup.exe /S /D=<测试目录>`。
 - 安装模式来自 NSIS 脚本：`INSTALLMODE=currentUser`，不需要管理员权限。
-- 测试目录：`C:\Users\wangm\AppData\Local\SmartSTLiteNsisTest-20260606145018`。
+- 测试目录：`%LOCALAPPDATA%\SmartSTLiteNsisTest-<timestamp>`。
 
 验证结果：
 
@@ -958,7 +958,7 @@ npm run tauri:install-smoke
 
 ```text
 status=passed
-installDir=C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606154025
+installDir=%LOCALAPPDATA%\SmartSTLiteNsisSmoke-<timestamp>
 installExitCode=0
 uninstallExitCode=0
 installedWorkerSmoke.source=windows-native
@@ -990,6 +990,63 @@ followUpRegression=npm run test:all:poc passed in about 69.3s
 - 该脚本已覆盖本机 currentUser 静默安装、安装版 Worker 控制面、安装版主程序内部 smoke、Native Worker start/drain/stop 基础链路和静默卸载残留检查。
 - 仍未覆盖干净 Windows 测试机、人工 UI 点击、LiveKit 房间连接、正式预览纹理、录像链路或真实院内部署权限。
 
+### 7.1.3 一体机真实连通性最小联调
+
+执行时间：2026-06-06。
+
+目标：验证真实项目没有专用服务器时，手术室电脑可同时运行 LiveKit、SmartST business service PoC 和手机 H5 observer，远端设备通过手术室电脑 IP 接入。
+
+新增文件和命令：
+
+```powershell
+npm run livekit:install-dev
+npm run connectivity:or-lab:start
+npm run connectivity:or-lab:verify
+npm run connectivity:or-lab:stop
+```
+
+本机准备：
+
+- 从 LiveKit 官方 GitHub release 下载 `v1.12.0` Windows AMD64 二进制到 `runtime/livekit/`，SHA-256 校验通过。
+- 本机无 Docker，当前联调使用 `runtime/livekit/livekit-server.exe` 直接运行。
+- 当前对外 LAN IP 修正为 `<OR-PC-LAN-IP>`；脚本已排除 `198.19.0.1` 等虚拟/代理网卡地址。
+
+当前联调拓扑：
+
+```text
+LiveKit:        ws://<OR-PC-LAN-IP>:7880
+Business API:   http://<OR-PC-LAN-IP>:4780
+Web observer:   http://<OR-PC-LAN-IP>:5175
+Room code:      ST-LAB-<timestamp>
+Session file:   runtime/or-connectivity/session.json
+```
+
+验证结果：
+
+- `npm run connectivity:or-lab:start`：通过，启动 LiveKit、业务服务和 web-observer。
+- `npm run connectivity:or-lab:verify`：通过，RoomService 创建真实 LiveKit room，业务服务为 OR host、示教室仅收看、示教室交互和手机 observer 签发真实 JWT。
+- 权限检查：OR host `canPublish=true`；示教室仅收看 `canPublish=false`；示教室交互 `canPublish=true`；手机 observer `canPublish=false`、`canPublishData=false`。
+- `npm run server:poc:livekit-preflight`：通过，使用同一 LiveKit 实例创建、查询并删除独立测试 room。
+- `http://<OR-PC-LAN-IP>:4780/health` 返回 `ok=true`。
+- `http://<OR-PC-LAN-IP>:5175` 返回 HTTP 200。
+- `Test-NetConnection <OR-PC-LAN-IP>:7880` 返回 `TcpTestSucceeded=True`。
+- `npm run web-observer:poc:build`、`npm run web-observer:poc:smoke`、`npm run server:poc:livekit-preflight:smoke` 均通过。
+- `npm run test:all:poc` 完整回归通过，最近一次耗时约 68.5 秒。
+
+已修正的工程问题：
+
+- Windows PowerShell 5 随机数 API 兼容性。
+- `Start-Process` 参数 quoting，避免仓库路径含空格时截断。
+- LiveKit Windows key-file 权限检查导致早退，改为服务进程继承 `LIVEKIT_KEYS`。
+- 自动 LAN IP 选择误选虚拟/代理网卡。
+- Node 读取 PowerShell UTF-8 BOM JSON 失败后回退默认地址。
+- H5 observer 局域网访问时自动把业务服务地址改为 `http://<当前主机>:4780`。
+
+边界：
+
+- 该验证只证明本机服务端连通性、真实 JWT 签发、RoomService 和手机 observer 权限边界。
+- 尚未完成桌面端实际入会、摄像头/麦克风发布、示教室订阅、双向语音、手机跨设备收看和防火墙放行验证。
+
 现场验证命令：
 
 ```powershell
@@ -1003,6 +1060,56 @@ npm run media-worker:usb4-validate
 $env:SMARTST_USB4_DURATION_SECONDS="7200"
 npm run media-worker:usb4-validate
 ```
+
+### 7.1.4 LiveKit 媒体转发和三包配置预检
+
+执行时间：2026-06-06。
+
+目标：补齐“手术室端只发布一次，示教室和手机并发由 LiveKit/SFU 转发”的自动化验证，并把 SmartST Server、SmartST OR Agent、Desktop Client 的配置边界固化为可检查模板。
+
+新增文件和命令：
+
+```powershell
+npm run connectivity:or-lab:media-smoke
+npm run connectivity:or-lab:or-agent-publisher-smoke
+npm run service:config-preflight
+```
+
+新增文件：
+
+- `scripts/livekit-media-smoke.mjs`
+- `scripts/or-agent-publisher-adapter-smoke.mjs`
+- `scripts/service-config-preflight.mjs`
+- `deploy/config/smartst-server.example.json`
+- `deploy/config/smartst-or-agent.example.json`
+- `deploy/config/smartst-desktop-client.example.json`
+- `deploy/windows-service/README.md`
+- `docs/real-connectivity-acceptance-checklist.md`
+
+验证结果：
+
+- `npm run connectivity:or-lab:media-smoke`：通过。
+- media smoke 创建独立 LiveKit room，业务服务创建同名 room contract，并签发 OR publisher、示教室互动订阅者和 3 个手机 observer 的真实 JWT。
+- synthetic OR publisher 发布 `video:field-camera` 和 `audio:or-room`。
+- 示教室订阅者和 3 个手机 observer 均收到 OR 音视频轨道。
+- 手机 observer 仍为 `canPublish=false`、`canPublishData=false`。
+- LiveKit participant 检查显示 OR 端发布轨道数为 2，非 OR 参与者发布轨道数为 0，说明本验证中手机并发没有把上行压力压到 OR publisher。
+- `npm run service:config-preflight`：通过。
+- `npm run connectivity:or-lab:or-agent-publisher-smoke`：通过。
+- OR Agent publisher adapter smoke 通过业务服务完成端点注册、示教室呼叫手术室、手术室接受、room 创建、OR host token、示教室 token 和手机 observer token。
+- Native Worker 绑定 1 路 Media Foundation 视频和 1 路 WASAPI 音频；adapter 通过 PPM/WAV 文件桥接把真实 payload queue 样本发布到 LiveKit。
+- Desktop teaching subscriber 通过业务服务签发的 token 入会，并收到 `video:field-camera` 和 `audio:or-room`。
+- 1 个手机 observer 收到同一组 OR 轨道，且仍为 `canPublish=false`、`canPublishData=false`；非 OR 参与者发布轨道数为 0。
+- 配置预检确认 business service `4780`、OR Agent control `4781`、LiveKit HTTP `7880`、ICE TCP `7881`、ICE UDP `7882`、web observer `5175` 的默认端口边界。
+- 配置预检确认 `LIVEKIT_API_SECRET` 只属于 SmartST Server；OR Agent 和 Desktop Client 不保存 LiveKit API secret；手机 observer 不允许发布。
+
+边界：
+
+- `connectivity:or-lab:media-smoke` 使用 `@livekit/rtc-node` synthetic publisher，只能作为自动化 LiveKit 媒体转发 smoke。
+- OR Agent publisher adapter smoke 使用 `@livekit/rtc-node` 加 PPM/WAV 文件桥接，只能作为自动化闭环验证，不是生产级发布链路。
+- `@livekit/rtc-node` 当前不应作为生产 OR Agent publisher 的最终依赖；真实发布仍需要 Native Worker payload queue 对接稳定的 native publisher、FFI 或 WHIP/网关方案。
+- Desktop Client 工作台已能通过业务服务创建/接受呼叫并把示教端 token 自动交给 LiveKit 面板连接；但尚未做两台真实 Desktop Client 的人工验收。
+- Windows Service 目前是配置模板和预检，不是已安装、可随 Windows 重启自动恢复的生产服务。
 
 ## 8. 本阶段停止条件
 
@@ -1019,12 +1126,12 @@ npm run media-worker:usb4-validate
 
 建议顺序：
 
-1. 固化三包服务化目录和 contracts：SmartST Server、SmartST OR Agent、Desktop Client。
-2. 将 `server-poc` 演进为 SmartST Server 原型，支持本机 LiveKit 配置、API secret 存储、RoomService preflight 和角色安装准备。
-3. 将 Tauri 后端中的 Native Worker 管理能力抽象为 OR Agent API，保持 Desktop Client 只调用控制面。
-4. 准备真实 LiveKit 服务节点；一体机部署时服务节点就是手术室电脑。
-5. 用真实环境变量启动 SmartST Server，让桌面 LiveKit PoC 面板连接真实 room。
+1. 将 Tauri 后端中的 Native Worker 管理能力抽象为 `SmartST OR Agent` 控制 API，保持 Desktop Client 只调用控制面。
+2. 将 OR Agent publisher adapter 从 PPM/WAV 文件桥接替换为无文件落地的 native SDK / FFI / WHIP 发布路径。
+3. 将 `server-poc` 演进为 `SmartST Server` 原型，增加持久配置、RoomService preflight、短期 token 签发、生产级 room 预创建和角色安装准备。
+4. 用两台真实 Desktop Client 完成呼叫、同意、入会、读取 `mediaPolicy` 默认画面并渲染。
+5. 用两台真实终端验证示教室订阅、双向音频、手机跨设备 H5 只读收看和防火墙放行。
 6. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
 7. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 native payload frameQueue。
 8. 用 `media-worker:native:audio-profile` 分别采集静音、讲话、外接全向麦样本，再进入重采样和 AEC 边界验证。
-9. 将视频/音频 native payload queue 对接实际预览、LiveKit native publisher 或录像写入前，继续补充周期性 drain/backpressure 场景和格式协商策略。
+9. 实现 Windows Service 安装、卸载、防火墙规则和重启后 preflight。

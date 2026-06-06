@@ -1,11 +1,61 @@
-import { PhoneCall, RadioTower, Smartphone, Tablet, Users } from "lucide-react";
+import { useState } from "react";
+import {
+  CheckCircle2,
+  PhoneCall,
+  RadioTower,
+  Smartphone,
+  Tablet,
+  Users,
+} from "lucide-react";
 import type { VideoChannel } from "../domain/mediaTypes";
+import {
+  createDesktopCallSession,
+  type BusinessCallMode,
+  type BusinessCallSession,
+} from "../services/businessService";
+import type { LiveKitConnectionDraft } from "../services/livekitRoomService";
 
 interface CallPanelProps {
   defaultChannel?: VideoChannel;
+  onLiveKitDraft?: (draft: LiveKitConnectionDraft) => void;
 }
 
-export function CallPanel({ defaultChannel }: CallPanelProps) {
+export function CallPanel({ defaultChannel, onLiveKitDraft }: CallPanelProps) {
+  const [businessUrl, setBusinessUrl] = useState(defaultBusinessUrl());
+  const [mode, setMode] = useState<BusinessCallMode>("interactive");
+  const [busy, setBusy] = useState(false);
+  const [session, setSession] = useState<BusinessCallSession | null>(null);
+  const [error, setError] = useState("");
+
+  async function startBusinessCall() {
+    setBusy(true);
+    setError("");
+    try {
+      const nextSession = await createDesktopCallSession({
+        businessUrl,
+        defaultChannel,
+        mode,
+      });
+      setSession(nextSession);
+      onLiveKitDraft?.({
+        id: nextSession.id,
+        serverUrl: nextSession.livekitUrl,
+        token: nextSession.token,
+        mode: nextSession.mode,
+        publishCamera: false,
+        publishMicrophone: false,
+        roomCode: nextSession.roomCode,
+        defaultChannelId: nextSession.defaultChannelId,
+        defaultTrackName: nextSession.defaultTrackName,
+        source: "business-call-panel",
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "业务呼叫失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="hmi-panel call-panel">
       <div className="hmi-section-heading">
@@ -47,10 +97,60 @@ export function CallPanel({ defaultChannel }: CallPanelProps) {
         </div>
       </div>
 
+      <div className="livekit-form call-service-form">
+        <label>
+          SmartST Server
+          <input
+            className="hmi-input"
+            onChange={(event) => setBusinessUrl(event.target.value)}
+            placeholder="http://127.0.0.1:4780"
+            value={businessUrl}
+          />
+        </label>
+      </div>
+
+      <div className="livekit-options call-mode-options">
+        <button
+          className={`hmi-segment ${mode === "watch" ? "active" : ""}`}
+          onClick={() => setMode("watch")}
+          type="button"
+        >
+          <Smartphone size={15} />
+          仅收看
+        </button>
+        <button
+          className={`hmi-segment ${mode === "interactive" ? "active" : ""}`}
+          onClick={() => setMode("interactive")}
+          type="button"
+        >
+          <RadioTower size={15} />
+          交互
+        </button>
+      </div>
+
+      {session && (
+        <div className="call-session-result">
+          <CheckCircle2 size={16} />
+          <div>
+            <strong>{session.roomCode}</strong>
+            <span>
+              {session.message} / {session.defaultTrackName ?? "no-default-track"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {error && <div className="native-worker-alert">{error}</div>}
+
       <div className="hmi-action-row">
-        <button className="hmi-button primary" disabled type="button">
+        <button
+          className="hmi-button primary"
+          disabled={busy}
+          onClick={startBusinessCall}
+          type="button"
+        >
           <PhoneCall size={17} />
-          呼叫示教室
+          {busy ? "呼叫中" : "呼叫并入会"}
         </button>
         <button className="hmi-button" disabled type="button">
           生成手机观看码
@@ -60,3 +160,16 @@ export function CallPanel({ defaultChannel }: CallPanelProps) {
   );
 }
 
+function defaultBusinessUrl() {
+  if (typeof window === "undefined") return "http://127.0.0.1:4780";
+  const host = window.location.hostname;
+  if (
+    host &&
+    host !== "localhost" &&
+    host !== "127.0.0.1" &&
+    !host.includes("tauri")
+  ) {
+    return `http://${host}:4780`;
+  }
+  return "http://127.0.0.1:4780";
+}

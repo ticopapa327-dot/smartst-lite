@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
+const host = process.env.SMARTST_WEB_OBSERVER_HOST || "127.0.0.1";
+const port = Number.parseInt(process.env.SMARTST_WEB_OBSERVER_PORT || "5175", 10);
 
 export default defineConfig({
   root: rootDir,
@@ -12,7 +14,7 @@ export default defineConfig({
     outDir: resolve(rootDir, "../dist-web-observer-poc"),
   },
   server: {
-    host: "127.0.0.1",
-    port: 5175,
+    host,
+    port,
   },
 });

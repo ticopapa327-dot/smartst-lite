@@ -176,9 +176,10 @@ src/
     SourcePicker.tsx
     VideoSourceCard.tsx
     LiveControlBar.tsx
+    UsbVideoConfigPanel.tsx
+    NativeWorkerPanel.tsx
     RecordingPanel.tsx
     ExportPanel.tsx
-    ReceiverPage.tsx
     SettingsPage.tsx
 ```
 

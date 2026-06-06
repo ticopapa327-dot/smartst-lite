@@ -65,6 +65,12 @@ npm run tauri:install-smoke
 
 当前阶段先做文档和脚本级验证，正式 Windows Service 验证在服务化实现后补齐。
 
+命令：
+
+```powershell
+npm run service:config-preflight
+```
+
 通过标准：
 
 - 安装角色必须能表达 `SmartST Server`、`SmartST OR Agent`、`SmartST Desktop Client`。
@@ -147,6 +153,35 @@ npm run server:poc:livekit-preflight
 | 手机 H5 并发 | 手机端只订阅，手术室端只发布一次默认画面 |
 | 人数超限 | 新用户收到明确提示 |
 
+### L3.1 一体机真实连通性最小联调
+
+目标：验证没有专用服务器时，手术室电脑可同时承担 LiveKit、业务服务和手机 H5 入口，远端设备通过手术室电脑固定 IP 接入。
+
+命令：
+
+```powershell
+npm run livekit:install-dev
+npm run connectivity:or-lab:start
+npm run connectivity:or-lab:verify
+npm run connectivity:or-lab:media-smoke
+npm run connectivity:or-lab:or-agent-publisher-smoke
+npm run connectivity:or-lab:stop
+```
+
+通过标准：
+
+- `runtime/livekit/livekit-server.exe` 来自官方 release，下载后通过 SHA-256 校验。
+- `connectivity:or-lab:start` 能启动 LiveKit、业务服务和 web-observer，并输出局域网访问地址。
+- `connectivity:or-lab:verify` 能通过 RoomService 创建或确认真实 LiveKit room。
+- 业务服务能为 OR host、示教室仅收看、示教室交互和手机 observer 分别签发真实 JWT。
+- 手机 observer token 必须保持 `canPublish=false`、`canPublishData=false`。
+- H5 observer 通过 `http://<手术室IP>:5175` 访问时，默认业务服务地址应自动指向 `http://<手术室IP>:4780`。
+- `connectivity:or-lab:media-smoke` 能让 synthetic OR publisher 发布 `video:field-camera` 和 `audio:or-room`，示教室订阅者和多个手机 observer 都能收到轨道。
+- `connectivity:or-lab:media-smoke` 必须确认非 OR 参与者发布轨道数为 0，手机 observer 仍不能发布音视频或 data。
+- `connectivity:or-lab:or-agent-publisher-smoke` 必须通过业务服务完成呼叫、接受、room、token、入会和默认画面订阅，且 OR publisher 的源必须来自 Native Worker 真实视频/音频 payload queue。
+- `connectivity:or-lab:or-agent-publisher-smoke` 当前允许使用 PPM/WAV 文件桥接；该项通过不代表生产发布链路已经完成。
+- 联调停止命令只停止 `runtime/or-connectivity/processes.json` 中记录的本轮进程。
+
 ### L4 录像、导出和恢复
 
 目标：验证医疗录像链路稳定性。
@@ -202,7 +237,8 @@ npm run server:poc:livekit-preflight
 
 ## 4. 当前已知边界
 
-- 当前 LiveKit 只完成 UI PoC，未完成真实 JWT 和真实 server 端到端。
+- 当前 LiveKit 已完成本机真实 JWT、RoomService、一体机服务连通、synthetic 媒体转发 smoke 和 Native Worker 文件桥接 publisher smoke；尚未完成生产级无文件 native publisher、双终端人工呼叫验收和 30 分钟双向语音稳定性。
 - 当前设备验证是 ffmpeg DirectShow 预检，不是最终 Media Foundation/WASAPI。
 - 当前录像是短时 DirectShow 文件写入，不是正式 Native Media Worker 医疗录像。
 - 当前业务服务是内存 PoC，没有数据库、认证和审计持久化。
+- 当前 Windows Service 仍是配置模板和预检，不是已安装的生产服务。

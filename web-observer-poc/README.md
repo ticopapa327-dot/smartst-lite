@@ -32,6 +32,14 @@ Start the phone observer page:
 npm run web-observer:poc:dev
 ```
 
+LAN mode for phone testing:
+
+```powershell
+npm run web-observer:poc:dev:lan
+```
+
+When opened through `http://<OR-PC-LAN-IP>:5175`, the page automatically changes the default business service URL to `http://<OR-PC-LAN-IP>:4780`.
+
 Build and smoke test:
 
 ```powershell

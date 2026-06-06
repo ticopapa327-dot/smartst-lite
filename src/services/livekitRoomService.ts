@@ -28,6 +28,19 @@ export interface LiveKitPocConnectOptions {
   onRemoteTrackUnsubscribed?: (trackInfo: LiveKitRemoteTrackInfo) => void;
 }
 
+export interface LiveKitConnectionDraft {
+  id: string;
+  serverUrl: string;
+  token: string;
+  mode: LiveKitPocMode;
+  publishCamera?: boolean;
+  publishMicrophone?: boolean;
+  roomCode?: string;
+  defaultChannelId?: string;
+  defaultTrackName?: string;
+  source?: string;
+}
+
 export interface LiveKitRemoteTrackInfo {
   participantIdentity: string;
   trackSid?: string;
@@ -64,7 +77,7 @@ export async function connectLiveKitPoc({
   }
 
   if (safeToken.startsWith("mock.")) {
-    throw new Error("当前 token 是 server-poc 的 mock token，不能连接真实 LiveKit。");
+    throw new Error("当前 token 是 server-poc mock token，不能连接真实 LiveKit。");
   }
 
   const room = new Room({
@@ -74,14 +87,22 @@ export async function connectLiveKitPoc({
 
   room
     .on(RoomEvent.Connected, () => onStatus?.("connected", "已连接 LiveKit room。"))
-    .on(RoomEvent.Reconnecting, () => onStatus?.("connecting", "LiveKit 正在重连。"))
-    .on(RoomEvent.Reconnected, () => onStatus?.("connected", "LiveKit 已重连。"))
-    .on(RoomEvent.Disconnected, () => onStatus?.("disconnected", "已断开 LiveKit room。"))
+    .on(RoomEvent.Reconnecting, () =>
+      onStatus?.("connecting", "LiveKit 正在重连。"),
+    )
+    .on(RoomEvent.Reconnected, () =>
+      onStatus?.("connected", "LiveKit 已重连。"),
+    )
+    .on(RoomEvent.Disconnected, () =>
+      onStatus?.("disconnected", "已断开 LiveKit room。"),
+    )
     .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       onRemoteTrack?.(toRemoteTrackInfo(track, publication, participant));
     })
     .on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
-      onRemoteTrackUnsubscribed?.(toRemoteTrackInfo(track, publication, participant));
+      onRemoteTrackUnsubscribed?.(
+        toRemoteTrackInfo(track, publication, participant),
+      );
     });
 
   onStatus?.("connecting", "正在连接 LiveKit room...");
@@ -108,7 +129,7 @@ export async function connectLiveKitPoc({
   }
 
   if (mode === "watch" && (publishCamera || publishMicrophone)) {
-    onStatus?.("connected", "仅收看模式已连接；本地音视频发布被禁止。");
+    onStatus?.("connected", "仅收看模式已连接，本地音视频发布被禁止。");
   }
 
   return {

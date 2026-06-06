@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "smartst.desktop-client.config.v0.1",
+  "role": "SmartST Desktop Client",
+  "serverUrl": "http://<OR-PC-LAN-IP>:4780",
+  "orAgentUrl": "http://127.0.0.1:4781",
+  "defaultClientType": "or-windows",
+  "livekit": {
+    "publicUrlFromServer": true,
+    "tokenSource": "SmartST Server",
+    "storeApiSecret": false
+  },
+  "layout": {
+    "defaultView": "workbench",
+    "defaultChannelId": "field-camera",
+    "allowMultiMonitorExpansion": true
+  },
+  "observer": {
+    "showRoomCode": true,
+    "showQrCode": true
+  },
+  "logs": {
+    "logDirectory": "%APPDATA%\\SmartST Lite\\logs"
+  }
+}

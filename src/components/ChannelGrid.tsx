@@ -37,7 +37,11 @@ export function ChannelGrid({ channels }: ChannelGridProps) {
             <div className="channel-footer">
               <div>
                 <strong>{roleLabels[channel.role]}</strong>
-                <span>{channel.preferredWidth ?? 1920}x{channel.preferredHeight ?? 1080} / {channel.preferredFrameRate ?? 30}fps</span>
+                <span>
+                  {channel.preferredWidth ?? 1920}x
+                  {channel.preferredHeight ?? 1080} /{" "}
+                  {channel.preferredFrameRate ?? 30}fps
+                </span>
               </div>
               <div className="channel-badges">
                 {channel.localPrimary && (
@@ -64,4 +68,3 @@ export function ChannelGrid({ channels }: ChannelGridProps) {
     </section>
   );
 }
-

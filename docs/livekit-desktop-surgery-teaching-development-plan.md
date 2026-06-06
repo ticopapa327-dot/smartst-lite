@@ -1,7 +1,7 @@
 # 桌面版手术示教软件开发计划
 
 > 适用仓库：`D:\我的工作\AOV\SmartST Lite`。  
-> 当前基线：Tauri 2 + React + TypeScript + Rust，已有 ONVIF/RTSP MVP、USB-first 重构文档、LiveKit UI PoC、真实 JWT smoke、Native Worker 控制面和安装版 smoke。
+> 当前基线：Tauri 2 + React + TypeScript + Rust，当前主线为 USB-first 工作台、LiveKit UI PoC、真实 JWT smoke、Native Worker 控制面、USB 通道绑定和安装版 smoke；旧 ONVIF/RTSP MVP 已从当前产品入口移除。
 > 计划原则：先验证硬件和媒体链路，再做完整 UI；先保证本地预览和录像，再接远程互动；SmartST Server、SmartST OR Agent、Desktop Client 三包逻辑分离；患者信息和文件管理从第一天按敏感数据处理。
 
 ## 1. 目标版本定义
@@ -106,7 +106,7 @@
 交付物：
 
 - 手术室工作台：默认 4 路预览。
-- 视频源管理：USB、RTSP、SRT 预留。
+- 视频源管理：USB 摄像机/USB 采集卡为默认入口，RTSP/SRT 仅作为后续高级输入适配器预留。
 - 音频设备选择：输入、输出、音量、电平。
 - PTZ 控制面板：能力检测、移动、缩放、聚焦、预置位。
 - 设备别名和通道角色保存。
