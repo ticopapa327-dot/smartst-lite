@@ -24,6 +24,7 @@
 
 ```powershell
 npm run server:poc:real-token-smoke
+npm run server:poc:livekit-preflight:smoke
 ```
 
 验证内容：
@@ -33,6 +34,7 @@ npm run server:poc:real-token-smoke
 - 校验 token response metadata 和真实 JWT metadata 中的 `defaultChannelId`、`defaultTrackName`、`startupVideoMode`，连接建立后客户端按业务服务合同确定默认画面，不按 LiveKit track 到达顺序猜测。
 - 手机观察端 token 仍为 `canPublish=false`、`canPublishData=false`。
 - smoke 不连接真实 LiveKit server，只验证签发结构和权限边界。
+- `server:poc:livekit-preflight:smoke` 不需要真实 LiveKit；它验证缺少 `LIVEKIT_URL`、`LIVEKIT_API_KEY` 或 `LIVEKIT_API_SECRET` 时真实 preflight 会返回 `missing-livekit-env`，避免无凭据环境误报通过。
 
 真实运行方式：
 
@@ -43,6 +45,27 @@ $env:LIVEKIT_API_KEY="..."
 $env:LIVEKIT_API_SECRET="..."
 npm run server:poc
 ```
+
+真实 LiveKit preflight：
+
+```powershell
+$env:LIVEKIT_URL="ws://127.0.0.1:7880"
+$env:LIVEKIT_API_KEY="..."
+$env:LIVEKIT_API_SECRET="..."
+npm run server:poc:livekit-preflight
+```
+
+该命令会把 `LIVEKIT_URL` 转换为 RoomService API host，创建唯一测试 room，查询 room 和参与者列表，再通过业务服务为同一 room 签发 OR host 和手机观察端真实 JWT；默认删除测试 room。当前本机未设置 `LIVEKIT_*`，执行结果为 `status=blocked`、`error=missing-livekit-env`，真实 LiveKit 服务端连通性尚未完成验证。
+
+本轮验证：
+
+```powershell
+npm run server:poc:livekit-preflight:smoke
+npm run server:poc:livekit-preflight
+npm run test:all:poc
+```
+
+结果：`server:poc:livekit-preflight:smoke` 通过；`server:poc:livekit-preflight` 在未设置 `LIVEKIT_*` 时按预期返回 `missing-livekit-env`；`npm run test:all:poc` 通过，完整回归耗时约 69.9 秒。
 
 边界：
 

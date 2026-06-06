@@ -134,6 +134,17 @@ npm run dev
 npm run build
 ```
 
+真实 LiveKit 服务预检：
+
+```powershell
+$env:LIVEKIT_URL="ws://127.0.0.1:7880"
+$env:LIVEKIT_API_KEY="..."
+$env:LIVEKIT_API_SECRET="..."
+npm run server:poc:livekit-preflight
+```
+
+该命令只从服务端环境变量读取 API secret，不写入仓库、不传给客户端；它会创建唯一测试 room，验证 LiveKit RoomService 可达、业务服务真实 JWT 签发、手术室端可发布权限、手机观察端 subscribe-only 权限，并在默认情况下删除测试 room。无真实环境变量时会返回 `missing-livekit-env` 阻塞结果。
+
 构建 Windows 可执行文件：
 
 ```powershell

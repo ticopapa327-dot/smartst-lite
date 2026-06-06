@@ -32,9 +32,12 @@ http://127.0.0.1:4780
 ```powershell
 npm run server:poc:smoke
 npm run server:poc:real-token-smoke
+npm run server:poc:livekit-preflight:smoke
 ```
 
 `server:poc:real-token-smoke` signs JWTs with local test credentials and validates the token payload. It does not connect to a LiveKit server.
+
+`server:poc:livekit-preflight:smoke` verifies that the real LiveKit preflight fails safely when `LIVEKIT_URL`, `LIVEKIT_API_KEY`, or `LIVEKIT_API_SECRET` are missing. It does not require a LiveKit server.
 
 ## Real LiveKit Token Mode
 
@@ -47,6 +50,17 @@ $env:LIVEKIT_API_KEY="..."
 $env:LIVEKIT_API_SECRET="..."
 npm run server:poc
 ```
+
+Before manual desktop testing, run the real LiveKit preflight:
+
+```powershell
+$env:LIVEKIT_URL="ws://127.0.0.1:7880"
+$env:LIVEKIT_API_KEY="..."
+$env:LIVEKIT_API_SECRET="..."
+npm run server:poc:livekit-preflight
+```
+
+The preflight uses the server SDK RoomService API to create and list a unique test room, then asks the business service to issue real OR host and phone observer JWTs for that room. By default it deletes the test room before exiting. Set `SMARTST_LIVEKIT_PREFLIGHT_KEEP_ROOM=1` only when you intentionally want to keep the room for manual debugging.
 
 The API secret must never be used in the desktop client, phone H5, Android tablet client, logs, or exported config.
 

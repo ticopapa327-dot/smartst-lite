@@ -99,6 +99,17 @@ npm run media-worker:device-probe
 
 目标：验证真实 server、真实 JWT、真实房间互动。
 
+命令：
+
+```powershell
+npm run server:poc:livekit-preflight:smoke
+
+$env:LIVEKIT_URL="ws://127.0.0.1:7880"
+$env:LIVEKIT_API_KEY="..."
+$env:LIVEKIT_API_SECRET="..."
+npm run server:poc:livekit-preflight
+```
+
 前置条件：
 
 - LiveKit server 可访问。
@@ -113,6 +124,7 @@ npm run media-worker:device-probe
 | 端点注册 | 手术室、示教室、平板均在线 |
 | 示教室呼叫手术室 | 待接、接受、拒绝、挂断状态正确 |
 | 手术室呼叫示教室 | 反向呼叫成立 |
+| 真实 LiveKit preflight | `server:poc:livekit-preflight` 能用真实 API key/secret 创建、查询并删除唯一测试 room，业务服务能为同一 room 签发真实 OR host 和手机观察端 JWT；无凭据时必须返回 `missing-livekit-env`，不得误报通过 |
 | 仅收看模式 | 远端不能发布音视频 |
 | 交互模式 | 双向语音稳定 |
 | 默认画面 | 业务服务返回 `mediaPolicy`，默认画面选择原因可审计；token metadata 和真实 JWT metadata 与 `mediaPolicy` 一致；无可用视频时进入 audio-only |

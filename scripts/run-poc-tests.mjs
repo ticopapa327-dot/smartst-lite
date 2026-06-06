@@ -7,6 +7,7 @@ const checks = [
   ["run", "web-observer:poc:build"],
   ["run", "server:poc:smoke"],
   ["run", "server:poc:real-token-smoke"],
+  ["run", "server:poc:livekit-preflight:smoke"],
   ["run", "web-observer:poc:smoke"],
   ["run", "media-worker:poc:smoke"],
   ["run", "media-worker:native:smoke"],

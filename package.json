@@ -23,6 +23,8 @@
     "server:poc": "node server-poc/server.mjs",
     "server:poc:smoke": "node server-poc/smoke.mjs",
     "server:poc:real-token-smoke": "node server-poc/real-token-smoke.mjs",
+    "server:poc:livekit-preflight": "node server-poc/livekit-preflight.mjs",
+    "server:poc:livekit-preflight:smoke": "node server-poc/livekit-preflight-smoke.mjs",
     "web-observer:poc:dev": "vite --host 127.0.0.1 --config web-observer-poc/vite.config.ts",
     "web-observer:poc:build": "tsc -p web-observer-poc/tsconfig.json && vite build --config web-observer-poc/vite.config.ts",
     "web-observer:poc:smoke": "node web-observer-poc/smoke.mjs",
