@@ -261,6 +261,7 @@
   - `native-worker/video-probe.mjs`
   - `native-worker/video-loop.mjs`
   - `native-worker/audio-probe.mjs`
+  - `native-worker/audio-render-probe.mjs`
   - `native-worker/session.mjs`
   - `native-worker/session-stress.mjs`
   - `src-tauri/src/main.rs`
@@ -325,6 +326,7 @@
   - 执行 `$env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS=1000; $env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS=1000; npm run media-worker:native:session-backpressure`：通过，3 秒内执行 6 次 consume event，`video.consumeCountEnd=6`、`video.consumerStatus=manual-drain`、`video.maxDepth=3`，`audio.consumeCountEnd=15`、`audio.consumerStatus=manual-drain`、`audio.maxDepth=50`；该低频 drain 只验证消费者控制链路，不代表生产消费速率。
   - backpressure 阶段复测 `npm run test:all:poc`：通过，完整回归耗时约 42.4 秒；仍有 Vite chunk 体积超过 500 kB 警告。
   - WASAPI render 播放端点枚举阶段新增 `listDevices.audioRender` 和 `diagnostics.wasapiRender`：`cargo check --manifest-path native-worker/Cargo.toml`、`cargo fmt --manifest-path native-worker/Cargo.toml --check`、`npm run media-worker:native:smoke` 均通过；`npm run media-worker:native:list-devices` 返回 `wasapiRender.status=ok`、`wasapiRender.count=1`、`audioRender[0]=扬声器 (Senary Audio)`；`npm run test:all:poc` 完整回归通过，耗时约 66.5 秒。该阶段只证明播放端点可枚举，不代表已实现 WASAPI render client、回放、loopback 或 AEC。
+  - WASAPI render mix format 阶段新增 Native Worker 命令 `probeAudioRenderFormat` 和脚本 `npm run media-worker:native:audio-render-probe`：通过，当前第 0 路 render 端点 `扬声器 (Senary Audio)` 返回 48000Hz、2ch、EXTENSIBLE/IEEE_FLOAT、32-bit、blockAlign=8，`devicePeriod.defaultHns=100000`、`minimumHns=30000`、`renderClientStatus=not-opened`；该命令已接入 `npm run test:all:poc` 回归链路，完整回归通过，耗时约 66.8 秒。
   - 执行 `cargo check --manifest-path src-tauri/Cargo.toml`：通过，新增 Tauri `get_native_worker_readiness`、`probe_native_worker_devices`、`start_native_worker_session`、`get_native_worker_session_status`、`stop_native_worker_session` 命令可编译。
   - 执行 `cargo test --manifest-path src-tauri/Cargo.toml`：通过，3 个 Tauri Native Worker helper 单元测试全部通过，覆盖默认 start 参数、workspace manifest 定位和 debug binary 路径命名。
   - 执行 `npm run build`：通过，Workbench 已接入 Native Worker readiness 状态条、手动 `Device Probe` 面板和手动 start/status/stop 控件；普通浏览器环境返回 `desktop-only`，不启动采集。
@@ -338,12 +340,12 @@
 - Native Worker 控制面骨架：
   - 已创建独立 Rust crate `native-worker`。
   - 已实现 JSON Lines stdin/stdout 控制面，支持 `listDevices`、`start`、`stop`、`consumeVideoPayloadQueue`、`exportVideoPayloadQueuePgm`、`exportVideoPayloadQueuePpm`、`consumeAudioPayloadQueue`、`exportAudioPayloadQueueWav`、`status`、`shutdown`。
-  - `listDevices` 已接入 Windows 原生枚举：Media Foundation 视频设备、WASAPI/Core Audio 采集端点和 WASAPI render 播放端点。
+  - `listDevices` 已接入 Windows 原生枚举：Media Foundation 视频设备、WASAPI/Core Audio 采集端点和 WASAPI render 播放端点；`probeAudioRenderFormat` 可读取 render endpoint 的 mix format 和 device period。
   - `start/status/stop` 已进入真实采集会话骨架：绑定当前视频/音频设备和默认媒体格式，缺失通道标记为 `waiting-for-device`，并在绑定设备时默认为每个已绑定视频通道启动可停止的 Media Foundation 视频统计线程，同时启动 WASAPI 音频统计线程。
   - 已增加 `media-worker:native:session-stress`，用于重复验证 start/status/stop 和线程 stop/join 清理。
   - 已增加 `probeVideoCapabilities` 和 `captureVideoSample`，可验证单路 Media Foundation 原生媒体类型和首帧样本读取。
   - 已增加 `measureVideoFrames`，可验证单路 Media Foundation 连续帧读取和帧率统计；真实帧 payload 仍留在 native 侧，不通过 JSON Lines 传输。
-  - 已增加 `probeAudioFormat` 和 `captureAudioBuffer`，可验证 WASAPI mix format 和短时 capture buffer 读取。
+  - 已增加 `probeAudioFormat`、`probeAudioRenderFormat` 和 `captureAudioBuffer`，可验证 WASAPI capture/render mix format 和短时 capture buffer 读取。
   - 已增加 `media-worker:native:audio-profile`，可对当前 WASAPI capture endpoint 做短时 RMS/peak/profile 基线采样。
   - 已增加 `media-worker:native:session-backpressure`，可验证视频/音频 native payload queue 在无消费者或周期性消费者场景下保持有界。
   - 当前已接入多路视频线程结构、Native Worker 显式视频通道绑定、Native Worker 视频格式偏好选择、Native Worker session plan smoke、native-only 有界帧 payload 队列、视频手动 drain 消费验证、视频 preview drain 消费者模拟、视频 native-side NV12/PGM 灰度导出、NV12/PPM RGB 转换导出验证、Native Worker 导出产物 manifest 校验、Tauri/工作台 Drain video/audio/AV 控制、WASAPI RMS/peak 音量统计、WASAPI render 播放端点枚举、native-only 有界 PCM packet payload 队列、音频手动 drain 消费验证、音频 call drain 消费者模拟、音视频 interaction drain 联合消费者模拟、短时 AV soak 连续采集验证、音频 native-side WAV 文件导出验证和 stop/join 清理，但本轮本机只枚举到 1 路视频设备；尚未接入预览纹理、音频重采样/AEC、WASAPI 播放/loopback、LiveKit native publisher 或真实录像。

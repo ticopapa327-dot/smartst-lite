@@ -59,6 +59,14 @@ try {
     assert(devices.audioRender[0].nativeId, "audio render native id is present");
     assert(devices.audioRender[0].dataFlow === "render", "audio render data flow is explicit");
   }
+  if (devices.source === "windows-native" && devices.audioRender.length > 0) {
+    const renderFormat = await request("probeAudioRenderFormat", { index: devices.audioRender[0].index ?? 0 });
+    assert(renderFormat.dataFlow === "render", "audio render format data flow is explicit");
+    assert(renderFormat.deviceCount === 1, "audio render format probes one selected endpoint");
+    assert(renderFormat.devices?.[0]?.device?.dataFlow === "render", "audio render format device keeps render data flow");
+    assert(renderFormat.devices?.[0]?.mixFormat?.samplesPerSec > 0, "audio render mix format sample rate is reported");
+    assert(renderFormat.devices?.[0]?.renderClientStatus === "not-opened", "audio render probe does not open playback stream");
+  }
 
   const started = await request("start", {
     channels: ["field-camera", "endoscope"],

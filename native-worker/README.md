@@ -5,7 +5,7 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 ## Current Scope
 
 - JSON Lines control plane over stdin/stdout.
-- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `exportVideoPayloadQueuePgm`, `exportVideoPayloadQueuePpm`, `consumeAudioPayloadQueue`, `exportAudioPayloadQueueWav`, `status`, `shutdown`.
+- Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `probeAudioRenderFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `exportVideoPayloadQueuePgm`, `exportVideoPayloadQueuePpm`, `consumeAudioPayloadQueue`, `exportAudioPayloadQueueWav`, `status`, `shutdown`.
 - `listDevices` uses Windows native enumeration when available:
   - Video: Media Foundation device source enumeration.
   - Audio capture: WASAPI/Core Audio capture endpoint enumeration.
@@ -84,6 +84,19 @@ $env:SMARTST_NATIVE_AUDIO_INDEX="0"
 $env:SMARTST_NATIVE_AUDIO_DURATION_MS="500"
 $env:SMARTST_NATIVE_AUDIO_POLL_INTERVAL_MS="10"
 npm run media-worker:native:audio-probe
+```
+
+## Probe Audio Render Format
+
+```powershell
+npm run media-worker:native:audio-render-probe
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_AUDIO_RENDER_INDEX="0"
+npm run media-worker:native:audio-render-probe
 ```
 
 ## Probe Native Capture Session
@@ -356,11 +369,13 @@ npm run media-worker:native:smoke
 
 The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is intended to become the production worker. High-volume media frames must stay in native pipelines; JSON Lines is only the control and status channel.
 
-`listDevices` still reports device capabilities as `capabilitiesStatus=not-enumerated`. Run `probeVideoCapabilities` or `media-worker:native:video-probe` for Media Foundation media types, and run `probeAudioFormat` or `media-worker:native:audio-probe` for WASAPI capture mix format. WASAPI render endpoints are enumerated for routing visibility only; render mix-format probing and playback are not implemented.
+`listDevices` still reports device capabilities as `capabilitiesStatus=not-enumerated`. Run `probeVideoCapabilities` or `media-worker:native:video-probe` for Media Foundation media types, run `probeAudioFormat` or `media-worker:native:audio-probe` for WASAPI capture mix format, and run `probeAudioRenderFormat` or `media-worker:native:audio-render-probe` for WASAPI render mix format. WASAPI render playback, loopback capture, and speaker quality validation are not implemented.
 
 `captureVideoSample` proves the source reader can return one native sample. It does not decode, preview, publish, encode, or record that sample.
 
 `measureVideoFrames` proves the source reader can keep returning native samples for a short interval. It returns statistics only; it still does not move frame payloads through JSON Lines, render preview, publish, encode, or record.
+
+`probeAudioRenderFormat` reads the selected WASAPI render endpoint mix format and device period only. It does not initialize a render client, play audio, capture loopback, perform echo cancellation, or validate speaker output.
 
 `captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
 
@@ -378,7 +393,7 @@ Each video thread reports `frameQueue` statistics with `mode=native-payload-boun
 
 `exportVideoPayloadQueuePgm` drains queued NV12 frames and writes a native-side PGM grayscale image from the Y plane. `exportVideoPayloadQueuePpm` drains queued NV12 frames and writes a native-side PPM RGB image using CPU BT.601-style conversion. Both support only NV12 today and return only file metadata plus pixel statistics. These are frame payload/file-consumer validation paths, not preview rendering, color calibration, LiveKit publishing, encoding, or recording.
 
-`listDevices` returns capture endpoints in `audio` and playback/render endpoints in `audioRender`; render enumeration is for future room playback, echo reference, and AEC routing design only. The worker does not open render clients, play audio, capture loopback, or validate speaker quality yet.
+`listDevices` returns capture endpoints in `audio` and playback/render endpoints in `audioRender`; `probeAudioRenderFormat` can read the selected render endpoint mix format and device period. This is for future room playback, echo reference, and AEC routing design only. The worker does not open render clients, play audio, capture loopback, or validate speaker quality yet.
 
 The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines. `consumeAudioPayloadQueue` drains queued native PCM packets and returns only metadata and byte counters, so it can validate the future resampler/AEC/publisher/recorder consumer boundary without returning PCM bytes. `exportAudioPayloadQueueWav` drains queued PCM packets and writes a native-side WAV file for PCM/IEEE_FLOAT mix formats; the JSON response returns only file metadata and byte counters. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or implement final recording policy. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
 

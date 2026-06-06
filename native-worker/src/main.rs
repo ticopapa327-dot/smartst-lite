@@ -604,6 +604,11 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
                 .map_err(|message| WorkerError::new("native-media-error", message))?,
             false,
         )),
+        "probeAudioRenderFormat" => Ok((
+            probe_audio_render_format(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
         "captureAudioBuffer" => Ok((
             capture_audio_buffer(&params)
                 .map_err(|message| WorkerError::new("native-media-error", message))?,
@@ -4702,6 +4707,24 @@ fn probe_audio_format(params: &Value) -> Result<Value, String> {
     })
 }
 
+fn probe_audio_render_format(params: &Value) -> Result<Value, String> {
+    let _com = ComApartment::initialize()?;
+    with_audio_render_devices(|records| {
+        let selected = select_audio_records_with_label(&records, params, "audio render")?;
+        let mut devices = Vec::new();
+        for record in selected {
+            devices.push(probe_audio_render_record_format(record)?);
+        }
+        Ok(json!({
+            "status": "ok",
+            "backend": "wasapi",
+            "dataFlow": "render",
+            "deviceCount": devices.len(),
+            "devices": devices
+        }))
+    })
+}
+
 fn capture_audio_buffer(params: &Value) -> Result<Value, String> {
     let duration_ms = optional_u32(params, "durationMs")?
         .unwrap_or(500)
@@ -4741,6 +4764,32 @@ fn probe_audio_record_format(record: &AudioDeviceRecord) -> Result<Value, String
                 "defaultHns": default_period_hns,
                 "minimumHns": minimum_period_hns
             }
+        }))
+    })
+}
+
+fn probe_audio_render_record_format(record: &AudioDeviceRecord) -> Result<Value, String> {
+    let audio_client: IAudioClient = unsafe {
+        record
+            .device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(format_windows_error)?
+    };
+    let mut default_period_hns = 0i64;
+    let mut minimum_period_hns = 0i64;
+    let _ = unsafe {
+        audio_client.GetDevicePeriod(Some(&mut default_period_hns), Some(&mut minimum_period_hns))
+    };
+    with_audio_mix_format(&audio_client, |format_ptr| {
+        Ok(json!({
+            "device": audio_render_device_record_to_json(record),
+            "capabilitiesStatus": "mix-format-enumerated",
+            "mixFormat": wave_format_to_json(format_ptr)?,
+            "devicePeriod": {
+                "defaultHns": default_period_hns,
+                "minimumHns": minimum_period_hns
+            },
+            "renderClientStatus": "not-opened"
         }))
     })
 }
@@ -4904,8 +4953,16 @@ fn select_audio_records<'a>(
     records: &'a [AudioDeviceRecord],
     params: &Value,
 ) -> Result<Vec<&'a AudioDeviceRecord>, String> {
+    select_audio_records_with_label(records, params, "audio capture")
+}
+
+fn select_audio_records_with_label<'a>(
+    records: &'a [AudioDeviceRecord],
+    params: &Value,
+    label: &str,
+) -> Result<Vec<&'a AudioDeviceRecord>, String> {
     if records.is_empty() {
-        return Err("No WASAPI audio capture devices were found".to_string());
+        return Err(format!("No WASAPI {label} devices were found"));
     }
     if params.get("all").and_then(Value::as_bool).unwrap_or(false) {
         return Ok(records.iter().collect());
@@ -4915,21 +4972,21 @@ fn select_audio_records<'a>(
             .iter()
             .find(|record| record.device_id == device_id)
             .map(|record| vec![record])
-            .ok_or_else(|| format!("Audio deviceId not found: {device_id}"));
+            .ok_or_else(|| format!("WASAPI {label} deviceId not found: {device_id}"));
     }
     if let Some(native_id) = params.get("nativeId").and_then(Value::as_str) {
         return records
             .iter()
             .find(|record| record.native_id == native_id)
             .map(|record| vec![record])
-            .ok_or_else(|| format!("Audio nativeId not found: {native_id}"));
+            .ok_or_else(|| format!("WASAPI {label} nativeId not found: {native_id}"));
     }
     let index = optional_u32(params, "index")?.unwrap_or(0);
     records
         .iter()
         .find(|record| record.index == index)
         .map(|record| vec![record])
-        .ok_or_else(|| format!("Audio index not found: {index}"))
+        .ok_or_else(|| format!("WASAPI {label} index not found: {index}"))
 }
 
 fn wave_format_to_json(format_ptr: *const WAVEFORMATEX) -> Result<Value, String> {
