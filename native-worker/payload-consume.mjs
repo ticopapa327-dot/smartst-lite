@@ -92,6 +92,7 @@ try {
     });
     assert(consumed.exportedOverJson === false, "payload consume does not export frame bytes");
     assert(consumed.payloadTransport === "native-only", "payload consume stays native-only");
+    assert(consumed.channelId === firstThread.channelId, "payload consume drains the requested channel");
     assert(consumed.consumedFrames > 0, "payload consume drains at least one frame");
     assert(consumed.consumedBytes > 0, "payload consume accounts for bytes");
     assert(consumed.remainingDepth <= firstThread.frameQueue.payloadQueue.depth, "payload consume reduces or bounds queue depth");
@@ -105,6 +106,7 @@ try {
       status: "passed",
       mode: started.captureSession?.mode,
       boundVideoChannels: started.captureSession?.boundVideoChannels,
+      requestedChannelId: firstThread.channelId,
       channelId: firstThread.channelId,
       copiedFrames: before.stats?.videoPayloadCopyCount ?? 0,
       queuedBytesBefore: before.stats?.videoPayloadQueueBytes ?? 0,
