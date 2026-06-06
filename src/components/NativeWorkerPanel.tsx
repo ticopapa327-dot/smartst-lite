@@ -55,6 +55,7 @@ export function NativeWorkerPanel() {
   const payloadQueueBytes = session?.stats?.videoPayloadQueueBytes ?? 0;
   const payloadConsumeCount = session?.stats?.videoPayloadConsumeCount ?? 0;
   const payloadConsumedBytes = session?.stats?.videoPayloadConsumedBytes ?? 0;
+  const drainVideoChannelId = firstBoundVideoChannelId(session);
 
   async function runProbe() {
     setIsProbing(true);
@@ -126,7 +127,12 @@ export function NativeWorkerPanel() {
     setIsSessionBusy(true);
     setSessionError(null);
     try {
-      setVideoPayloadConsume(await consumeNativeWorkerVideoPayloadQueue({ maxFrames: 2 }));
+      setVideoPayloadConsume(
+        await consumeNativeWorkerVideoPayloadQueue({
+          ...(drainVideoChannelId ? { channelId: drainVideoChannelId } : {}),
+          maxFrames: 2,
+        }),
+      );
       setSession(await getNativeWorkerSessionStatus());
     } catch (error) {
       setSessionError(errorMessage(error));
@@ -152,7 +158,12 @@ export function NativeWorkerPanel() {
     setIsSessionBusy(true);
     setSessionError(null);
     try {
-      setVideoPayloadConsume(await consumeNativeWorkerVideoPayloadQueue({ maxFrames: 1 }));
+      setVideoPayloadConsume(
+        await consumeNativeWorkerVideoPayloadQueue({
+          ...(drainVideoChannelId ? { channelId: drainVideoChannelId } : {}),
+          maxFrames: 1,
+        }),
+      );
       setAudioPayloadConsume(await consumeNativeWorkerAudioPayloadQueue({ maxPackets: 5 }));
       setSession(await getNativeWorkerSessionStatus());
     } catch (error) {
@@ -218,7 +229,7 @@ export function NativeWorkerPanel() {
           <Activity size={18} />
           <strong>{payloadConsumeCount} video consumed</strong>
           <span>
-            {formatBytes(payloadConsumedBytes)} drained / {formatDrainDetail(videoPayloadConsume, "video")}
+            {drainVideoChannelId ?? "no video channel"} / {formatBytes(payloadConsumedBytes)} drained / {formatDrainDetail(videoPayloadConsume, "video")}
           </span>
         </div>
         <div className="recording-stat">
@@ -281,6 +292,9 @@ function formatBytes(bytes: number): string {
 function formatDrainDetail(result: NativeWorkerPayloadConsumeResult | null, kind: "video" | "audio"): string {
   if (!result) return "not-drained";
   const pieces = [result.status ?? "unknown"];
+  if (result.channelId) {
+    pieces.push(result.channelId);
+  }
   const latestSequence = result.latestSequence;
   if (typeof latestSequence === "number" && Number.isInteger(latestSequence)) {
     pieces.push(`seq ${latestSequence}`);
@@ -294,4 +308,20 @@ function formatDrainDetail(result: NativeWorkerPayloadConsumeResult | null, kind
     pieces.push(`${count} ${kind === "video" ? "frames" : "packets"}`);
   }
   return pieces.join(" / ");
+}
+
+function firstBoundVideoChannelId(session: NativeWorkerSessionSnapshot | null): string | undefined {
+  const channels = Array.isArray(session?.channels) ? session.channels : [];
+  for (const channel of channels) {
+    if (!isRecord(channel)) continue;
+    if (channel.source !== "windows-native") continue;
+    if (typeof channel.channelId === "string" && channel.channelId.trim()) {
+      return channel.channelId;
+    }
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
