@@ -34,6 +34,27 @@ npm run recording:poc:smoke
 - 允许 Vite chunk 体积警告，但不能有 TypeScript 错误。
 - 生成产物只能位于 `dist/`、`dist-web-observer-poc/`、`runtime/`，不能进入 git 跟踪。
 
+### L0.5 桌面发布产物验证
+
+目标：确认 Windows 桌面端不是只依赖源码目录和调试 Worker。
+
+必跑命令：
+
+```powershell
+npm run media-worker:native:build:release
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri:build:exe
+npm run tauri:build
+```
+
+通过标准：
+
+- `src-tauri\target\release\smartst-lite.exe` 生成。
+- `native-worker\target\release\smartst-native-worker.exe` 生成。
+- `src-tauri\target\release\bin\smartst-native-worker.exe` 生成。
+- `src-tauri\target\release\bundle\nsis\SmartST Lite_0.1.4_x64-setup.exe` 生成。
+- `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\smartst-native-worker.exe"` 和卸载删除项。
+
 ### L1 本机设备预检
 
 目标：验证 Windows 本机能枚举并短时打开媒体设备。

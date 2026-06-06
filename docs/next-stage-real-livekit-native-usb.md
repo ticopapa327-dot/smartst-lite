@@ -845,6 +845,43 @@ blocker=insufficient-video-devices
 - 该结果只能作为基础可用性测试，不能作为正式手术室 4 路采集卡验收。
 - 按当前阶段决策，现有摄像头性能降级只记录为开发机限制，不阻塞 Native Worker 后续开发；目标采集卡到位后再做采集参数和实时性优化。
 
+## 7.1 桌面发布与 Native Worker 打包验证
+
+本轮目标：修正桌面端只能从 workspace/debug Worker 或 Cargo 启动的问题，让发布版优先启动随应用安装的 Native Worker。
+
+代码和配置变更：
+
+- `package.json` 新增 `media-worker:native:build:release`，并让 `tauri:build:exe`、`tauri:build` 先构建 release Native Worker。
+- `src-tauri/tauri.conf.json` 新增 `bundle.resources`，把 `native-worker/target/release/smartst-native-worker.exe` 打入安装资源，目标路径为 `bin/smartst-native-worker.exe`。
+- Tauri 后端 readiness 新增 `launchMode`、`packagedExecutablePath`、`packagedExecutableExists`，启动顺序调整为 packaged Worker 优先、workspace debug Worker 次之、Cargo source fallback 最后。
+- `probe_native_worker_devices` 和 `start_native_worker_session` 通过 `AppHandle` 解析 Tauri `resource_dir()`，安装环境不再要求存在源码目录或 Rust 工具链。
+
+已执行验证：
+
+```powershell
+npm run media-worker:native:build:release
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run build
+npm run tauri:build:exe
+npm run tauri:build
+npm run test:all:poc
+```
+
+结果：
+
+- `cargo test --manifest-path src-tauri/Cargo.toml` 通过，6 个 Tauri helper 单元测试全部通过。
+- `npm run build` 通过，桌面前端构建无 TypeScript 错误。
+- `npm run tauri:build:exe` 通过，生成 `src-tauri/target/release/smartst-lite.exe`。
+- `npm run tauri:build` 通过，生成 `src-tauri/target/release/bundle/nsis/SmartST Lite_0.1.4_x64-setup.exe`。
+- `npm run test:all:poc` 通过，完整 PoC 回归耗时约 70.4 秒。
+- Tauri release 目录已生成 `src-tauri/target/release/bin/smartst-native-worker.exe`。
+- 生成的 `src-tauri/target/release/nsis/x64/installer.nsi` 包含 `File /a "/oname=bin\smartst-native-worker.exe"`，卸载段包含 `Delete "$INSTDIR\bin\smartst-native-worker.exe"`。
+
+边界：
+
+- 该验证证明 Tauri release 和 NSIS 安装包包含 Native Worker 资源。
+- 本轮没有执行安装器静默安装后的端到端启动验证，避免安装器写入系统注册表、开始菜单和卸载项；正式交付前仍需在干净 Windows 测试机上安装并执行 `Native Worker ready -> Probe devices -> Start session -> Drain AV -> Stop`。
+
 现场验证命令：
 
 ```powershell

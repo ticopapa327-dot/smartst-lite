@@ -10,11 +10,14 @@ export type NativeWorkerReadinessStatus =
 
 export interface NativeWorkerReadiness {
   status: NativeWorkerReadinessStatus;
+  launchMode: string;
   workspaceRoot: string;
   manifestPath: string;
   executablePath: string;
+  packagedExecutablePath: string;
   manifestExists: boolean;
   executableExists: boolean;
+  packagedExecutableExists: boolean;
   cargoAvailable: boolean;
   cargoVersion: string | null;
   message: string;
@@ -93,11 +96,14 @@ export async function getNativeWorkerReadiness(): Promise<NativeWorkerReadiness>
   if (!isTauriRuntime()) {
     return {
       status: "desktop-only",
+      launchMode: "desktop-only",
       workspaceRoot: "",
       manifestPath: "",
       executablePath: "",
+      packagedExecutablePath: "",
       manifestExists: false,
       executableExists: false,
+      packagedExecutableExists: false,
       cargoAvailable: false,
       cargoVersion: null,
       message: "Native Worker readiness is only available in the Windows desktop runtime.",
@@ -109,11 +115,14 @@ export async function getNativeWorkerReadiness(): Promise<NativeWorkerReadiness>
   } catch (error) {
     return {
       status: "error",
+      launchMode: "error",
       workspaceRoot: "",
       manifestPath: "",
       executablePath: "",
+      packagedExecutablePath: "",
       manifestExists: false,
       executableExists: false,
+      packagedExecutableExists: false,
       cargoAvailable: false,
       cargoVersion: null,
       message: error instanceof Error ? error.message : String(error),

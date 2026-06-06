@@ -11,12 +11,13 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Cursor, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::Manager;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
@@ -63,11 +64,14 @@ struct RtspPreviewSession {
 #[serde(rename_all = "camelCase")]
 struct NativeWorkerReadiness {
     status: String,
+    launch_mode: String,
     workspace_root: String,
     manifest_path: String,
     executable_path: String,
+    packaged_executable_path: String,
     manifest_exists: bool,
     executable_exists: bool,
+    packaged_executable_exists: bool,
     cargo_available: bool,
     cargo_version: Option<String>,
     message: String,
@@ -202,35 +206,84 @@ fn append_log(entry: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_native_worker_readiness() -> Result<NativeWorkerReadiness, String> {
-    let workspace_root = workspace_root_dir()?;
-    let manifest_path = workspace_root.join("native-worker").join("Cargo.toml");
-    let executable_path = native_worker_executable_path(&workspace_root);
-    let manifest_exists = manifest_path.is_file();
-    let executable_exists = executable_path.is_file();
+fn get_native_worker_readiness(app: tauri::AppHandle) -> Result<NativeWorkerReadiness, String> {
+    native_worker_readiness(Some(&app))
+}
+
+fn native_worker_readiness(
+    app: Option<&tauri::AppHandle>,
+) -> Result<NativeWorkerReadiness, String> {
+    let workspace_root = workspace_root_dir().ok();
+    let manifest_path = workspace_root
+        .as_ref()
+        .map(|root| root.join("native-worker").join("Cargo.toml"));
+    let workspace_executable_path = workspace_root
+        .as_ref()
+        .map(|root| native_worker_executable_path(root));
+    let packaged_executable_path = packaged_native_worker_executable_path(app);
+    let selected_executable_path = packaged_executable_path
+        .as_ref()
+        .or(workspace_executable_path.as_ref());
+    let manifest_exists = manifest_path.as_ref().is_some_and(|path| path.is_file());
+    let executable_exists = selected_executable_path.is_some_and(|path| path.is_file());
+    let packaged_executable_exists = packaged_executable_path
+        .as_ref()
+        .is_some_and(|path| path.is_file());
     let cargo_version = command_version("cargo", "--version");
     let cargo_available = cargo_version.is_some();
-    let status = if manifest_exists && (executable_exists || cargo_available) {
-        "ready"
+    let (status, launch_mode, message) = if packaged_executable_exists {
+        (
+            "ready",
+            "packaged",
+            "Native Worker packaged binary is available.",
+        )
+    } else if manifest_exists && executable_exists {
+        (
+            "ready",
+            "workspace-binary",
+            "Native Worker workspace debug binary is available.",
+        )
+    } else if manifest_exists && cargo_available {
+        (
+            "ready",
+            "workspace-source",
+            "Native Worker source is available and Cargo can build it.",
+        )
     } else if manifest_exists {
-        "source-only"
+        (
+            "source-only",
+            "workspace-source-only",
+            "Native Worker source exists, but Cargo/debug binary is unavailable.",
+        )
     } else {
-        "missing"
-    };
-    let message = match status {
-        "ready" if executable_exists => "Native Worker debug binary is available.",
-        "ready" => "Native Worker source is available and Cargo can build it.",
-        "source-only" => "Native Worker source exists, but Cargo/debug binary is unavailable.",
-        _ => "Native Worker source is missing from the workspace.",
+        (
+            "missing",
+            "missing",
+            "Native Worker packaged binary and workspace source are both unavailable.",
+        )
     };
 
     Ok(NativeWorkerReadiness {
         status: status.to_string(),
-        workspace_root: workspace_root.to_string_lossy().to_string(),
-        manifest_path: manifest_path.to_string_lossy().to_string(),
-        executable_path: executable_path.to_string_lossy().to_string(),
+        launch_mode: launch_mode.to_string(),
+        workspace_root: workspace_root
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        manifest_path: manifest_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        executable_path: selected_executable_path
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        packaged_executable_path: packaged_executable_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
         manifest_exists,
         executable_exists,
+        packaged_executable_exists,
         cargo_available,
         cargo_version,
         message: message.to_string(),
@@ -238,8 +291,8 @@ fn get_native_worker_readiness() -> Result<NativeWorkerReadiness, String> {
 }
 
 #[tauri::command]
-fn probe_native_worker_devices() -> Result<NativeWorkerDeviceProbe, String> {
-    let readiness = get_native_worker_readiness()?;
+fn probe_native_worker_devices(app: tauri::AppHandle) -> Result<NativeWorkerDeviceProbe, String> {
+    let readiness = native_worker_readiness(Some(&app))?;
     if readiness.status != "ready" {
         return Ok(NativeWorkerDeviceProbe {
             status: "unavailable".to_string(),
@@ -249,8 +302,7 @@ fn probe_native_worker_devices() -> Result<NativeWorkerDeviceProbe, String> {
         });
     }
 
-    let workspace_root = workspace_root_dir()?;
-    let mut command = native_worker_launch_command(&workspace_root)?;
+    let mut command = native_worker_launch_command(Some(&app))?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -299,12 +351,15 @@ fn probe_native_worker_devices() -> Result<NativeWorkerDeviceProbe, String> {
 }
 
 #[tauri::command]
-fn start_native_worker_session(params: Option<Value>) -> Result<Value, String> {
+fn start_native_worker_session(
+    app: tauri::AppHandle,
+    params: Option<Value>,
+) -> Result<Value, String> {
     let mut session = NATIVE_WORKER_SESSION
         .lock()
         .map_err(|_| "Native Worker session lock is poisoned.".to_string())?;
     if session.is_none() {
-        *session = Some(spawn_native_worker_process()?);
+        *session = Some(spawn_native_worker_process(Some(&app))?);
     }
     let worker = session
         .as_mut()
@@ -1389,21 +1444,55 @@ fn workspace_root_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "Native Worker workspace root not found.".to_string())
 }
 
-fn native_worker_executable_path(workspace_root: &std::path::Path) -> PathBuf {
-    let executable_name = if cfg!(windows) {
+fn native_worker_executable_name() -> &'static str {
+    if cfg!(windows) {
         "smartst-native-worker.exe"
     } else {
         "smartst-native-worker"
-    };
+    }
+}
 
+fn native_worker_executable_path(workspace_root: &Path) -> PathBuf {
     workspace_root
         .join("native-worker")
         .join("target")
         .join("debug")
-        .join(executable_name)
+        .join(native_worker_executable_name())
 }
 
-fn native_worker_launch_command(workspace_root: &std::path::Path) -> Result<Command, String> {
+fn packaged_native_worker_candidate_paths(app: Option<&tauri::AppHandle>) -> Vec<PathBuf> {
+    let executable_name = native_worker_executable_name();
+    let mut candidates = Vec::new();
+
+    if let Some(app) = app {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(resource_dir.join("bin").join(executable_name));
+            candidates.push(resource_dir.join(executable_name));
+        }
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join("bin").join(executable_name));
+            candidates.push(exe_dir.join("resources").join("bin").join(executable_name));
+            candidates.push(exe_dir.join(executable_name));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn packaged_native_worker_executable_path(app: Option<&tauri::AppHandle>) -> Option<PathBuf> {
+    packaged_native_worker_candidate_paths(app)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn native_worker_workspace_launch_command(workspace_root: &Path) -> Result<Command, String> {
     let executable_path = native_worker_executable_path(workspace_root);
     if executable_path.is_file() {
         let mut command = Command::new(executable_path);
@@ -1425,9 +1514,23 @@ fn native_worker_launch_command(workspace_root: &std::path::Path) -> Result<Comm
     Ok(command)
 }
 
-fn spawn_native_worker_process() -> Result<NativeWorkerProcess, String> {
+fn native_worker_launch_command(app: Option<&tauri::AppHandle>) -> Result<Command, String> {
+    if let Some(executable_path) = packaged_native_worker_executable_path(app) {
+        let mut command = Command::new(&executable_path);
+        if let Some(parent) = executable_path.parent() {
+            command.current_dir(parent);
+        }
+        return Ok(command);
+    }
+
     let workspace_root = workspace_root_dir()?;
-    let mut command = native_worker_launch_command(&workspace_root)?;
+    native_worker_workspace_launch_command(&workspace_root)
+}
+
+fn spawn_native_worker_process(
+    app: Option<&tauri::AppHandle>,
+) -> Result<NativeWorkerProcess, String> {
+    let mut command = native_worker_launch_command(app)?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1951,5 +2054,22 @@ mod tests {
         } else {
             assert_eq!(file_name, "smartst-native-worker");
         }
+
+        assert!(executable_path.to_string_lossy().contains("native-worker"));
+        assert!(executable_path.to_string_lossy().contains("debug"));
+    }
+
+    #[test]
+    fn packaged_native_worker_candidates_include_local_fallbacks() {
+        let candidates = packaged_native_worker_candidate_paths(None);
+
+        assert!(candidates.iter().any(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value == native_worker_executable_name())
+        }));
+        assert!(candidates
+            .iter()
+            .any(|path| path.to_string_lossy().contains("bin")));
     }
 }

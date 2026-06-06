@@ -30,6 +30,7 @@
     "media-worker:poc:smoke": "node media-worker-poc/smoke.mjs",
     "media-worker:native": "cargo run --quiet --manifest-path native-worker/Cargo.toml",
     "media-worker:native:build": "cargo build --manifest-path native-worker/Cargo.toml",
+    "media-worker:native:build:release": "cargo build --release --manifest-path native-worker/Cargo.toml",
     "media-worker:native:list-devices": "node native-worker/list-devices.mjs",
     "media-worker:native:video-probe": "node native-worker/video-probe.mjs",
     "media-worker:native:video-loop": "node native-worker/video-loop.mjs",
@@ -65,8 +66,8 @@
     "recording:poc:smoke": "node media-worker-poc/recording-poc-smoke.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build:exe": "tauri build --no-bundle",
-    "tauri:build": "tauri build"
+    "tauri:build:exe": "npm run media-worker:native:build:release && tauri build --no-bundle",
+    "tauri:build": "npm run media-worker:native:build:release && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
