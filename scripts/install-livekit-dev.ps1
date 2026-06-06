@@ -11,7 +11,7 @@ function Get-RepoRoot {
 
 function Invoke-GitHubJson {
   param([string]$Uri)
-  return Invoke-RestMethod -Uri $Uri -Headers @{ "User-Agent" = "SmartST-Lite" }
+  return Invoke-RestMethod -Uri $Uri -Headers @{ "User-Agent" = "UST-Lite" }
 }
 
 $repoRoot = Get-RepoRoot
@@ -38,8 +38,8 @@ if (-not $asset) {
 $zipPath = Join-Path $Destination $asset.name
 $checksumsPath = Join-Path $Destination "checksums.txt"
 
-Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath -Headers @{ "User-Agent" = "SmartST-Lite" }
-Invoke-WebRequest -Uri "https://github.com/livekit/livekit/releases/download/$($release.tag_name)/checksums.txt" -OutFile $checksumsPath -Headers @{ "User-Agent" = "SmartST-Lite" }
+Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath -Headers @{ "User-Agent" = "UST-Lite" }
+Invoke-WebRequest -Uri "https://github.com/livekit/livekit/releases/download/$($release.tag_name)/checksums.txt" -OutFile $checksumsPath -Headers @{ "User-Agent" = "UST-Lite" }
 
 $expectedLine = Get-Content -Encoding UTF8 $checksumsPath |
   Where-Object { $_ -match [regex]::Escape($asset.name) } |

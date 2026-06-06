@@ -10,7 +10,7 @@ if (-not $StatePath) {
 }
 
 if (-not (Test-Path -LiteralPath $StatePath)) {
-  Write-Output "No SmartST OR connectivity lab process state was found at $StatePath."
+  Write-Output "No UST OR connectivity lab process state was found at $StatePath."
   exit 0
 }
 
@@ -38,7 +38,7 @@ foreach ($processInfo in $state.processes) {
 }
 
 [pscustomobject]@{
-  schemaVersion = "smartst.or-connectivity-lab.stop.v0.1"
+  schemaVersion = "ust.or-connectivity-lab.stop.v0.1"
   stoppedAt = (Get-Date).ToString("o")
   statePath = $StatePath
   stopped = $stopped

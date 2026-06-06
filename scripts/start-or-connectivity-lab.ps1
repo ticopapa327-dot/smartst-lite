@@ -1,7 +1,7 @@
 param(
   [string]$LanIp = "",
   [string]$LiveKitExe = "",
-  [string]$ApiKey = "smartst-dev-key",
+  [string]$ApiKey = "ust-dev-key",
   [string]$ApiSecret = "",
   [int]$BusinessPort = 4780,
   [int]$WebObserverPort = 5175,
@@ -239,9 +239,9 @@ if (-not (Test-Path -LiteralPath $viteCli)) {
 Assert-TcpPortFree -Port 7880 -Name "LiveKit HTTP"
 Assert-TcpPortFree -Port 7881 -Name "LiveKit ICE TCP"
 Assert-UdpPortFree -Port 7882 -Name "LiveKit ICE UDP"
-Assert-TcpPortFree -Port $BusinessPort -Name "SmartST business service"
+Assert-TcpPortFree -Port $BusinessPort -Name "UST business service"
 if (-not $NoWebObserver) {
-  Assert-TcpPortFree -Port $WebObserverPort -Name "SmartST web observer"
+  Assert-TcpPortFree -Port $WebObserverPort -Name "UST web observer"
 }
 
 $keyFile = Join-Path $runtimeDir "livekit.keys"
@@ -264,8 +264,8 @@ try {
 Wait-TcpPort -Port 7880
 
 $savedBusinessEnv = Save-Env @(
-  "SMARTST_POC_HOST",
-  "SMARTST_POC_PORT",
+  "UST_POC_HOST",
+  "UST_POC_PORT",
   "LIVEKIT_TOKEN_MODE",
   "LIVEKIT_URL",
   "LIVEKIT_API_KEY",
@@ -273,8 +273,8 @@ $savedBusinessEnv = Save-Env @(
 )
 
 try {
-  $env:SMARTST_POC_HOST = "0.0.0.0"
-  $env:SMARTST_POC_PORT = [string]$BusinessPort
+  $env:UST_POC_HOST = "0.0.0.0"
+  $env:UST_POC_PORT = [string]$BusinessPort
   $env:LIVEKIT_TOKEN_MODE = "real"
   $env:LIVEKIT_URL = "ws://$LanIp`:7880"
   $env:LIVEKIT_API_KEY = $ApiKey
@@ -293,10 +293,10 @@ try {
 Wait-HttpOk -Url "http://127.0.0.1:$BusinessPort/health"
 
 if (-not $NoWebObserver) {
-  $savedWebEnv = Save-Env @("SMARTST_WEB_OBSERVER_HOST", "SMARTST_WEB_OBSERVER_PORT")
+  $savedWebEnv = Save-Env @("UST_WEB_OBSERVER_HOST", "UST_WEB_OBSERVER_PORT")
   try {
-    $env:SMARTST_WEB_OBSERVER_HOST = "0.0.0.0"
-    $env:SMARTST_WEB_OBSERVER_PORT = [string]$WebObserverPort
+    $env:UST_WEB_OBSERVER_HOST = "0.0.0.0"
+    $env:UST_WEB_OBSERVER_PORT = [string]$WebObserverPort
 
     $processes += Start-LabProcess `
       -Name "web-observer" `
@@ -312,7 +312,7 @@ if (-not $NoWebObserver) {
 }
 
 $state = [pscustomobject]@{
-  schemaVersion = "smartst.or-connectivity-lab.v0.1"
+  schemaVersion = "ust.or-connectivity-lab.v0.1"
   startedAt = (Get-Date).ToString("o")
   lanIp = $LanIp
   apiKey = $ApiKey

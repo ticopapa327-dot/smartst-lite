@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const executableName = process.platform === "win32" ? "smartst-native-worker.exe" : "smartst-native-worker";
+const executableName = process.platform === "win32" ? "ust-native-worker.exe" : "ust-native-worker";
 const workerPath = resolve(rootDir, "src-tauri/target/release/bin", executableName);
 
 assert(existsSync(workerPath), `release worker is missing: ${workerPath}`);

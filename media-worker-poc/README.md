@@ -1,4 +1,4 @@
-# SmartST Lite Media Worker PoC
+# 视捷UST Media Worker PoC
 
 This proof-of-concept validates the control-plane boundary for a future native media worker.
 

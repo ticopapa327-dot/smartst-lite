@@ -55,7 +55,7 @@ export function AppShell({
             <Clapperboard size={24} />
           </div>
           <div>
-            <div className="brand-name">SmartST Lite</div>
+            <div className="brand-name">视捷UST</div>
             <div className="brand-subtitle">{organizationName}</div>
           </div>
         </div>

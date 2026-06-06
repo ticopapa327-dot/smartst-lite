@@ -1,12 +1,12 @@
 {
-  "schemaVersion": "smartst.server.config.v0.1",
-  "role": "SmartST Server",
+  "schemaVersion": "ust.server.config.v0.1",
+  "role": "UST Server",
   "listen": {
     "host": "0.0.0.0",
     "businessPort": 4780
   },
   "livekit": {
-    "serverExecutable": "C:\\Program Files\\SmartST\\server\\livekit-server.exe",
+    "serverExecutable": "C:\\Program Files\\UST\\server\\livekit-server.exe",
     "publicUrl": "ws://<OR-PC-LAN-IP>:7880",
     "apiHost": "http://127.0.0.1:7880",
     "apiKeyEnv": "LIVEKIT_API_KEY",
@@ -31,7 +31,7 @@
     "defaultRoute": "/observer"
   },
   "audit": {
-    "logDirectory": "C:\\ProgramData\\SmartST\\server\\logs",
+    "logDirectory": "C:\\ProgramData\\UST\\server\\logs",
     "redactPatientFields": true,
     "redactSecrets": true
   }

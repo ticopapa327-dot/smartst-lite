@@ -1,6 +1,6 @@
-# SmartST Native Worker
+# UST Native Worker
 
-This is the first Rust Native Worker skeleton for SmartST Lite.
+This is the first Rust Native Worker skeleton for 视捷UST.
 
 ## Current Scope
 
@@ -39,7 +39,7 @@ npm run media-worker:native:build
 npm run media-worker:native:build:release
 ```
 
-The Tauri desktop package includes the release binary as `bin\smartst-native-worker.exe`.
+The Tauri desktop package includes the release binary as `bin\ust-native-worker.exe`.
 
 Validate the packaged release binary directly:
 
@@ -62,10 +62,10 @@ npm run media-worker:native:video-probe
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_VIDEO_INDEX="0"
-$env:SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
-$env:SMARTST_NATIVE_VIDEO_MAX_TYPES="128"
-$env:SMARTST_NATIVE_VIDEO_MAX_ATTEMPTS="60"
+$env:UST_NATIVE_VIDEO_INDEX="0"
+$env:UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
+$env:UST_NATIVE_VIDEO_MAX_TYPES="128"
+$env:UST_NATIVE_VIDEO_MAX_ATTEMPTS="60"
 npm run media-worker:native:video-probe
 ```
 
@@ -78,10 +78,10 @@ npm run media-worker:native:video-loop
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_VIDEO_INDEX="0"
-$env:SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
-$env:SMARTST_NATIVE_VIDEO_DURATION_MS="2000"
-$env:SMARTST_NATIVE_VIDEO_MAX_READS="10000"
+$env:UST_NATIVE_VIDEO_INDEX="0"
+$env:UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
+$env:UST_NATIVE_VIDEO_DURATION_MS="2000"
+$env:UST_NATIVE_VIDEO_MAX_READS="10000"
 npm run media-worker:native:video-loop
 ```
 
@@ -94,9 +94,9 @@ npm run media-worker:native:audio-probe
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AUDIO_INDEX="0"
-$env:SMARTST_NATIVE_AUDIO_DURATION_MS="500"
-$env:SMARTST_NATIVE_AUDIO_POLL_INTERVAL_MS="10"
+$env:UST_NATIVE_AUDIO_INDEX="0"
+$env:UST_NATIVE_AUDIO_DURATION_MS="500"
+$env:UST_NATIVE_AUDIO_POLL_INTERVAL_MS="10"
 npm run media-worker:native:audio-probe
 ```
 
@@ -109,7 +109,7 @@ npm run media-worker:native:audio-render-probe
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AUDIO_RENDER_INDEX="0"
+$env:UST_NATIVE_AUDIO_RENDER_INDEX="0"
 npm run media-worker:native:audio-render-probe
 ```
 
@@ -122,9 +122,9 @@ npm run media-worker:native:audio-render-silence
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AUDIO_RENDER_INDEX="0"
-$env:SMARTST_NATIVE_AUDIO_RENDER_DURATION_MS="500"
-$env:SMARTST_NATIVE_AUDIO_RENDER_POLL_INTERVAL_MS="10"
+$env:UST_NATIVE_AUDIO_RENDER_INDEX="0"
+$env:UST_NATIVE_AUDIO_RENDER_DURATION_MS="500"
+$env:UST_NATIVE_AUDIO_RENDER_POLL_INTERVAL_MS="10"
 npm run media-worker:native:audio-render-silence
 ```
 
@@ -137,9 +137,9 @@ npm run media-worker:native:audio-loopback-probe
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AUDIO_RENDER_INDEX="0"
-$env:SMARTST_NATIVE_LOOPBACK_DURATION_MS="500"
-$env:SMARTST_NATIVE_LOOPBACK_POLL_INTERVAL_MS="10"
+$env:UST_NATIVE_AUDIO_RENDER_INDEX="0"
+$env:UST_NATIVE_LOOPBACK_DURATION_MS="500"
+$env:UST_NATIVE_LOOPBACK_POLL_INTERVAL_MS="10"
 npm run media-worker:native:audio-loopback-probe
 ```
 
@@ -152,13 +152,13 @@ npm run media-worker:native:session
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_CHANNELS="field-camera,endoscope"
-$env:SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
-$env:SMARTST_NATIVE_VIDEO_THREAD_LIMIT="2"
-$env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
-$env:SMARTST_NATIVE_AUDIO_INDEX="0"
-$env:SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="500"
+$env:UST_NATIVE_SESSION_CHANNELS="field-camera,endoscope"
+$env:UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX="0"
+$env:UST_NATIVE_VIDEO_THREAD_LIMIT="2"
+$env:UST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
+$env:UST_NATIVE_AUDIO_INDEX="0"
+$env:UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
+$env:UST_NATIVE_SESSION_HOLD_MS="500"
 npm run media-worker:native:session
 ```
 
@@ -171,9 +171,9 @@ npm run media-worker:native:format-preference
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_VIDEO_INDEX="0"
-$env:SMARTST_NATIVE_VIDEO_PREFERRED_SUBTYPE="NV12"
-$env:SMARTST_NATIVE_VIDEO_FORMAT_MAX_TYPES="128"
+$env:UST_NATIVE_VIDEO_INDEX="0"
+$env:UST_NATIVE_VIDEO_PREFERRED_SUBTYPE="NV12"
+$env:UST_NATIVE_VIDEO_FORMAT_MAX_TYPES="128"
 npm run media-worker:native:format-preference
 ```
 
@@ -186,7 +186,7 @@ npm run media-worker:native:channel-binding
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_VIDEO_INDEX="0"
+$env:UST_NATIVE_VIDEO_INDEX="0"
 npm run media-worker:native:channel-binding
 ```
 
@@ -199,7 +199,7 @@ npm run media-worker:native:session-plan
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_PLAN_PATH="native-worker/.tmp/session-plan-smoke.json"
+$env:UST_NATIVE_SESSION_PLAN_PATH="native-worker/.tmp/session-plan-smoke.json"
 npm run media-worker:native:session-plan
 ```
 
@@ -212,11 +212,11 @@ npm run media-worker:native:session-stress
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_STRESS_ITERATIONS="3"
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
-$env:SMARTST_NATIVE_VIDEO_THREAD_LIMIT="2"
-$env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
-$env:SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
+$env:UST_NATIVE_SESSION_STRESS_ITERATIONS="3"
+$env:UST_NATIVE_SESSION_HOLD_MS="1000"
+$env:UST_NATIVE_VIDEO_THREAD_LIMIT="2"
+$env:UST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
+$env:UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
 npm run media-worker:native:session-stress
 ```
 
@@ -229,9 +229,9 @@ npm run media-worker:native:payload-consume
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
-$env:SMARTST_NATIVE_VIDEO_PAYLOAD_CONSUME_MAX_FRAMES="2"
-$env:SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
+$env:UST_NATIVE_SESSION_HOLD_MS="1000"
+$env:UST_NATIVE_VIDEO_PAYLOAD_CONSUME_MAX_FRAMES="2"
+$env:UST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY="3"
 npm run media-worker:native:payload-consume
 ```
 
@@ -244,9 +244,9 @@ npm run media-worker:native:video-preview-drain
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_PREVIEW_DRAIN_DURATION_MS="2000"
-$env:SMARTST_NATIVE_PREVIEW_DRAIN_INTERVAL_MS="250"
-$env:SMARTST_NATIVE_PREVIEW_DRAIN_MAX_FRAMES="1"
+$env:UST_NATIVE_PREVIEW_DRAIN_DURATION_MS="2000"
+$env:UST_NATIVE_PREVIEW_DRAIN_INTERVAL_MS="250"
+$env:UST_NATIVE_PREVIEW_DRAIN_MAX_FRAMES="1"
 npm run media-worker:native:video-preview-drain
 ```
 
@@ -259,9 +259,9 @@ npm run media-worker:native:video-pgm-export
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
-$env:SMARTST_NATIVE_VIDEO_PGM_EXPORT_MAX_FRAMES="1"
-$env:SMARTST_NATIVE_VIDEO_PGM_EXPORT_PATH="native-worker/.tmp/video-payload-export.pgm"
+$env:UST_NATIVE_SESSION_HOLD_MS="1000"
+$env:UST_NATIVE_VIDEO_PGM_EXPORT_MAX_FRAMES="1"
+$env:UST_NATIVE_VIDEO_PGM_EXPORT_PATH="native-worker/.tmp/video-payload-export.pgm"
 npm run media-worker:native:video-pgm-export
 ```
 
@@ -274,9 +274,9 @@ npm run media-worker:native:video-ppm-export
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
-$env:SMARTST_NATIVE_VIDEO_PPM_EXPORT_MAX_FRAMES="1"
-$env:SMARTST_NATIVE_VIDEO_PPM_EXPORT_PATH="native-worker/.tmp/video-payload-export.ppm"
+$env:UST_NATIVE_SESSION_HOLD_MS="1000"
+$env:UST_NATIVE_VIDEO_PPM_EXPORT_MAX_FRAMES="1"
+$env:UST_NATIVE_VIDEO_PPM_EXPORT_PATH="native-worker/.tmp/video-payload-export.ppm"
 npm run media-worker:native:video-ppm-export
 ```
 
@@ -289,9 +289,9 @@ npm run media-worker:native:audio-payload-consume
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
-$env:SMARTST_NATIVE_AUDIO_PAYLOAD_CONSUME_MAX_PACKETS="5"
-$env:SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
+$env:UST_NATIVE_SESSION_HOLD_MS="1000"
+$env:UST_NATIVE_AUDIO_PAYLOAD_CONSUME_MAX_PACKETS="5"
+$env:UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY="50"
 npm run media-worker:native:audio-payload-consume
 ```
 
@@ -304,9 +304,9 @@ npm run media-worker:native:audio-call-drain
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AUDIO_CALL_DRAIN_DURATION_MS="2000"
-$env:SMARTST_NATIVE_AUDIO_CALL_DRAIN_INTERVAL_MS="250"
-$env:SMARTST_NATIVE_AUDIO_CALL_DRAIN_MAX_PACKETS="5"
+$env:UST_NATIVE_AUDIO_CALL_DRAIN_DURATION_MS="2000"
+$env:UST_NATIVE_AUDIO_CALL_DRAIN_INTERVAL_MS="250"
+$env:UST_NATIVE_AUDIO_CALL_DRAIN_MAX_PACKETS="5"
 npm run media-worker:native:audio-call-drain
 ```
 
@@ -319,10 +319,10 @@ npm run media-worker:native:interaction-drain
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_INTERACTION_DRAIN_DURATION_MS="2000"
-$env:SMARTST_NATIVE_INTERACTION_DRAIN_INTERVAL_MS="250"
-$env:SMARTST_NATIVE_INTERACTION_DRAIN_MAX_VIDEO_FRAMES="1"
-$env:SMARTST_NATIVE_INTERACTION_DRAIN_MAX_AUDIO_PACKETS="5"
+$env:UST_NATIVE_INTERACTION_DRAIN_DURATION_MS="2000"
+$env:UST_NATIVE_INTERACTION_DRAIN_INTERVAL_MS="250"
+$env:UST_NATIVE_INTERACTION_DRAIN_MAX_VIDEO_FRAMES="1"
+$env:UST_NATIVE_INTERACTION_DRAIN_MAX_AUDIO_PACKETS="5"
 npm run media-worker:native:interaction-drain
 ```
 
@@ -335,10 +335,10 @@ npm run media-worker:native:av-soak
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AV_SOAK_DURATION_MS="30000"
-$env:SMARTST_NATIVE_AV_SOAK_SAMPLE_INTERVAL_MS="500"
-$env:SMARTST_NATIVE_AV_SOAK_DRAIN_INTERVAL_MS="500"
-$env:SMARTST_NATIVE_AV_SOAK_OUTPUT="native-worker/.tmp/av-soak-smoke.json"
+$env:UST_NATIVE_AV_SOAK_DURATION_MS="30000"
+$env:UST_NATIVE_AV_SOAK_SAMPLE_INTERVAL_MS="500"
+$env:UST_NATIVE_AV_SOAK_DRAIN_INTERVAL_MS="500"
+$env:UST_NATIVE_AV_SOAK_OUTPUT="native-worker/.tmp/av-soak-smoke.json"
 npm run media-worker:native:av-soak
 ```
 
@@ -351,9 +351,9 @@ npm run media-worker:native:audio-wav-export
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_SESSION_HOLD_MS="1000"
-$env:SMARTST_NATIVE_AUDIO_WAV_EXPORT_MAX_PACKETS="10"
-$env:SMARTST_NATIVE_AUDIO_WAV_EXPORT_PATH="native-worker/.tmp/audio-payload-export.wav"
+$env:UST_NATIVE_SESSION_HOLD_MS="1000"
+$env:UST_NATIVE_AUDIO_WAV_EXPORT_MAX_PACKETS="10"
+$env:UST_NATIVE_AUDIO_WAV_EXPORT_PATH="native-worker/.tmp/audio-payload-export.wav"
 npm run media-worker:native:audio-wav-export
 ```
 
@@ -366,8 +366,8 @@ npm run media-worker:native:export-artifact-manifest
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_EXPORT_MANIFEST_PATH="native-worker/.tmp/export-artifact-manifest.json"
-$env:SMARTST_NATIVE_EXPORT_MANIFEST_MAX_AGE_MS="300000"
+$env:UST_NATIVE_EXPORT_MANIFEST_PATH="native-worker/.tmp/export-artifact-manifest.json"
+$env:UST_NATIVE_EXPORT_MANIFEST_MAX_AGE_MS="300000"
 npm run media-worker:native:export-artifact-manifest
 ```
 
@@ -380,10 +380,10 @@ npm run media-worker:native:audio-profile
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_AUDIO_PROFILE_LABEL="quiet-room"
-$env:SMARTST_NATIVE_AUDIO_PROFILE_DURATION_MS="10000"
-$env:SMARTST_NATIVE_AUDIO_PROFILE_SAMPLE_INTERVAL_MS="500"
-$env:SMARTST_NATIVE_AUDIO_PROFILE_OUTPUT="tmp/audio-profile-quiet-room.json"
+$env:UST_NATIVE_AUDIO_PROFILE_LABEL="quiet-room"
+$env:UST_NATIVE_AUDIO_PROFILE_DURATION_MS="10000"
+$env:UST_NATIVE_AUDIO_PROFILE_SAMPLE_INTERVAL_MS="500"
+$env:UST_NATIVE_AUDIO_PROFILE_OUTPUT="tmp/audio-profile-quiet-room.json"
 npm run media-worker:native:audio-profile
 ```
 
@@ -396,10 +396,10 @@ npm run media-worker:native:session-backpressure
 Environment overrides:
 
 ```powershell
-$env:SMARTST_NATIVE_BACKPRESSURE_DURATION_MS="10000"
-$env:SMARTST_NATIVE_BACKPRESSURE_SAMPLE_INTERVAL_MS="500"
-$env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS="0"
-$env:SMARTST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS="0"
+$env:UST_NATIVE_BACKPRESSURE_DURATION_MS="10000"
+$env:UST_NATIVE_BACKPRESSURE_SAMPLE_INTERVAL_MS="500"
+$env:UST_NATIVE_BACKPRESSURE_CONSUME_VIDEO_EVERY_MS="0"
+$env:UST_NATIVE_BACKPRESSURE_CONSUME_AUDIO_EVERY_MS="0"
 npm run media-worker:native:session-backpressure
 ```
 
@@ -427,13 +427,13 @@ The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is in
 
 `captureAudioBuffer` proves the WASAPI capture client can return short native buffers. It does not decode, resample, echo-cancel, publish, encode, or record PCM data.
 
-`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `SMARTST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, pass `videoFrameQueueCapacity` / `SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the native-only bounded frame payload queue, or pass `audioPayloadQueueCapacity` / `SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY` to size the native-only bounded audio packet payload queue.
+`start` now binds requested channels to currently available Media Foundation devices by index and binds one WASAPI capture endpoint for session metadata. Missing video devices are reported as `waiting-for-device`; they do not block the worker from starting. `start` starts one Media Foundation video thread per bound video channel and one WASAPI audio statistics thread by default when matching devices are bound. Pass `startVideoThread=false` or `startAudioThread=false` to keep either disabled, pass `videoThreadLimit` / `UST_NATIVE_VIDEO_THREAD_LIMIT` for staged 1/2/4-channel hardware validation, pass `videoFrameQueueCapacity` / `UST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY` to size the native-only bounded frame payload queue, or pass `audioPayloadQueueCapacity` / `UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY` to size the native-only bounded audio packet payload queue.
 
 When `videoFormatPreference` is present, `start` scans native Media Foundation media types and chooses the nearest match by subtype, width, height, frame rate, and optional minimum constraints. The channel response includes `requestedMediaTypeIndex` and `mediaTypeSelection`; the capture thread uses the selected channel `mediaType.mediaTypeIndex`. Without `videoFormatPreference`, behavior remains index-based and defaults to media type index `0`.
 
 When `videoChannelBindings` is present, `start` can bind a requested channel to a specific Media Foundation video device by `index`, `deviceId`, `nativeId`, or `displayNameContains`. The channel response includes `deviceBinding`. Without `videoChannelBindings`, behavior remains enumeration-order based: requested channel N binds to video device N when available.
 
-`session-plan` is a Node-side smoke that combines explicit channel binding and video format preference, starts a short native session, verifies copied frames, and writes `smartst.native-session-plan.v0.1` JSON to `.tmp`. It is a hardware/session configuration aid only; it is not the formal recording manifest, database schema, or LiveKit room contract.
+`session-plan` is a Node-side smoke that combines explicit channel binding and video format preference, starts a short native session, verifies copied frames, and writes `ust.native-session-plan.v0.1` JSON to `.tmp`. It is a hardware/session configuration aid only; it is not the formal recording manifest, database schema, or LiveKit room contract.
 
 `video-preview-drain` simulates a future preview or publisher consumer by periodically draining one video frame from the native queue and validating increasing sequence metadata, consumed byte counters, and `exportedOverJson=false`. It still does not render pixels, upload GPU textures, publish LiveKit tracks, encode, or record.
 
@@ -449,9 +449,9 @@ The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and 
 
 `interaction-drain` starts video and audio in the same native session and periodically drains both queues. It validates the combined control path expected by an interactive teaching connection, but it still does not render preview textures, publish LiveKit tracks, perform AEC, encode, record, or prove end-to-end media sync.
 
-`av-soak` runs a configurable short continuous audio/video capture profile, samples status, periodically drains native video/audio payload queues, verifies copy counters increase, queue depths remain within configured capacity, payload copy errors stay at 0, and writes `smartst.native-av-soak.v0.1` JSON to `.tmp`. It is a sustained local capture/control smoke, not an endurance test, media quality acceptance, LiveKit publisher, AEC test, recording path, or multi-device certification.
+`av-soak` runs a configurable short continuous audio/video capture profile, samples status, periodically drains native video/audio payload queues, verifies copy counters increase, queue depths remain within configured capacity, payload copy errors stay at 0, and writes `ust.native-av-soak.v0.1` JSON to `.tmp`. It is a sustained local capture/control smoke, not an endurance test, media quality acceptance, LiveKit publisher, AEC test, recording path, or multi-device certification.
 
-`export-artifact-manifest` is a Node-side verification script that reads the generated PGM, PPM, and WAV files, verifies their headers and dimensions, checks the artifact mtime is fresh by default, computes SHA-256 checksums, and writes `smartst.native-export-artifacts.v0.1` JSON. It is an export smoke artifact manifest only; it is not the formal surgical recording manifest, patient binding contract, playback index, or storage policy.
+`export-artifact-manifest` is a Node-side verification script that reads the generated PGM, PPM, and WAV files, verifies their headers and dimensions, checks the artifact mtime is fresh by default, computes SHA-256 checksums, and writes `ust.native-export-artifacts.v0.1` JSON. It is an export smoke artifact manifest only; it is not the formal surgical recording manifest, patient binding contract, playback index, or storage policy.
 
 `audio-profile` samples `status` periodically and summarizes packet growth, RMS/peak, silent packets, discontinuities, timestamp errors, and native PCM queue counters. It is intended for quiet-room / speech / external microphone comparison baselines. It does not export PCM payloads, measure echo cancellation, or prove production audio quality.
 

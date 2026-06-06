@@ -7,17 +7,17 @@ import { assert, parseWavHeader } from "./export-artifact-utils.mjs";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera")
+const channels = (process.env.UST_NATIVE_SESSION_CHANNELS || "field-camera")
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean);
-const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
-const audioPayloadQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", 50);
-const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 1000);
-const maxPackets = readIntegerEnv("SMARTST_NATIVE_AUDIO_WAV_EXPORT_MAX_PACKETS", 10);
+const audioIndex = readIntegerEnv("UST_NATIVE_AUDIO_INDEX", 0);
+const audioPayloadQueueCapacity = readIntegerEnv("UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", 50);
+const holdMs = readIntegerEnv("UST_NATIVE_SESSION_HOLD_MS", 1000);
+const maxPackets = readIntegerEnv("UST_NATIVE_AUDIO_WAV_EXPORT_MAX_PACKETS", 10);
 const outputPath = resolve(
   rootDir,
-  process.env.SMARTST_NATIVE_AUDIO_WAV_EXPORT_PATH || "native-worker/.tmp/audio-payload-export.wav",
+  process.env.UST_NATIVE_AUDIO_WAV_EXPORT_PATH || "native-worker/.tmp/audio-payload-export.wav",
 );
 
 await mkdir(dirname(outputPath), { recursive: true });

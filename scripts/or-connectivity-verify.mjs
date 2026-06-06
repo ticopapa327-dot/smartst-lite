@@ -32,7 +32,7 @@ try {
       departureTimeout: 30,
       maxParticipants: 16,
       metadata: JSON.stringify({
-        purpose: "smartst-or-connectivity-lab",
+        purpose: "ust-or-connectivity-lab",
         roomCode: config.roomCode,
         createdAt: startedAt.toISOString(),
       }),
@@ -93,7 +93,7 @@ try {
   assert(phoneObserver.metadata.defaultTrackName === "video:field-camera", "observer default track mismatch");
 
   const session = {
-    schemaVersion: "smartst.or-connectivity-lab.session.v0.1",
+    schemaVersion: "ust.or-connectivity-lab.session.v0.1",
     createdAt: startedAt.toISOString(),
     businessUrl: config.businessUrl,
     livekitUrl: config.livekitUrl,
@@ -114,7 +114,7 @@ try {
 
   printJson({
     status: "passed",
-    schemaVersion: "smartst.or-connectivity-lab.verify.v0.1",
+    schemaVersion: "ust.or-connectivity-lab.verify.v0.1",
     businessUrl: config.businessUrl,
     livekitUrl: config.livekitUrl,
     roomId: config.roomId,
@@ -136,7 +136,7 @@ try {
 } catch (error) {
   printJson({
     status: "failed",
-    schemaVersion: "smartst.or-connectivity-lab.verify.v0.1",
+    schemaVersion: "ust.or-connectivity-lab.verify.v0.1",
     businessUrl: config.businessUrl,
     livekitUrl: config.livekitUrl,
     roomId: config.roomId,
@@ -151,8 +151,8 @@ async function readConfig() {
   const localKeys = await readLocalKeys();
   const processState = await readProcessState();
   const businessUrl = normalizeBaseUrl(
-    process.env.SMARTST_LAB_BUSINESS_URL ||
-      process.env.SMARTST_BUSINESS_URL ||
+    process.env.UST_LAB_BUSINESS_URL ||
+      process.env.UST_BUSINESS_URL ||
       processState.businessUrl ||
       "http://127.0.0.1:4780",
   );
@@ -172,10 +172,10 @@ async function readConfig() {
     livekitUrl,
     apiKey,
     apiSecret,
-    roomId: process.env.SMARTST_LAB_ROOM_ID || `smartst-lab-${roomStamp}`,
-    roomCode: process.env.SMARTST_LAB_ROOM_CODE || `ST-LAB-${roomStamp.slice(0, 8)}-${roomStamp.slice(8)}`,
-    webObserverUrl: process.env.SMARTST_LAB_WEB_OBSERVER_URL || processState.webObserverUrl || "",
-    timeoutMs: Number.parseInt(process.env.SMARTST_LAB_TIMEOUT_MS || "8000", 10),
+    roomId: process.env.UST_LAB_ROOM_ID || `ust-lab-${roomStamp}`,
+    roomCode: process.env.UST_LAB_ROOM_CODE || `ST-LAB-${roomStamp.slice(0, 8)}-${roomStamp.slice(8)}`,
+    webObserverUrl: process.env.UST_LAB_WEB_OBSERVER_URL || processState.webObserverUrl || "",
+    timeoutMs: Number.parseInt(process.env.UST_LAB_TIMEOUT_MS || "8000", 10),
   };
 }
 

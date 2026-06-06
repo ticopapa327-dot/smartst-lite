@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig, DefaultPaths } from "../domain/types";
 
-const STORAGE_KEY = "smartst-lite-config";
+const STORAGE_KEY = "ust-desktop-client-config";
 
 export const defaultSettings = {
   serverUrl: "http://127.0.0.1:7880",
   organizationName: "未命名机构",
-  deviceName: "SmartST Lite Windows 终端",
+  deviceName: "视捷UST Windows 终端",
   logDirectory: "",
 };
 
@@ -29,8 +29,8 @@ export async function getDefaultPaths(): Promise<DefaultPaths> {
   }
 
   return {
-    configPath: "localStorage://smartst-lite-config",
-    logDirectory: "localStorage://smartst-lite-logs",
+    configPath: "localStorage://ust-desktop-client-config",
+    logDirectory: "localStorage://ust-desktop-client-logs",
   };
 }
 

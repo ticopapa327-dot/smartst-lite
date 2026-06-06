@@ -7,13 +7,13 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 const outputPath = resolve(
   rootDir,
-  process.env.SMARTST_NATIVE_SESSION_PLAN_PATH || "native-worker/.tmp/session-plan-smoke.json",
+  process.env.UST_NATIVE_SESSION_PLAN_PATH || "native-worker/.tmp/session-plan-smoke.json",
 );
 
-const videoIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_INDEX", 0);
-const maxMediaTypes = readIntegerEnv("SMARTST_NATIVE_VIDEO_FORMAT_MAX_TYPES", 128);
-const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 500);
-const preferredSubtype = process.env.SMARTST_NATIVE_VIDEO_PREFERRED_SUBTYPE || "NV12";
+const videoIndex = readIntegerEnv("UST_NATIVE_VIDEO_INDEX", 0);
+const maxMediaTypes = readIntegerEnv("UST_NATIVE_VIDEO_FORMAT_MAX_TYPES", 128);
+const holdMs = readIntegerEnv("UST_NATIVE_SESSION_HOLD_MS", 500);
+const preferredSubtype = process.env.UST_NATIVE_VIDEO_PREFERRED_SUBTYPE || "NV12";
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,
@@ -122,7 +122,7 @@ try {
     assert(thread?.frameQueue?.payloadQueue?.copyCount > 0, "session plan capture thread copies payload frames");
 
     const plan = {
-      schemaVersion: "smartst.native-session-plan.v0.1",
+      schemaVersion: "ust.native-session-plan.v0.1",
       generatedAt: new Date().toISOString(),
       source: {
         kind: "native-worker-session-plan-smoke",

@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const audioRenderIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_RENDER_INDEX", 0);
-const durationMs = readIntegerEnv("SMARTST_NATIVE_AUDIO_RENDER_DURATION_MS", 500);
-const pollIntervalMs = readIntegerEnv("SMARTST_NATIVE_AUDIO_RENDER_POLL_INTERVAL_MS", 10);
+const audioRenderIndex = readIntegerEnv("UST_NATIVE_AUDIO_RENDER_INDEX", 0);
+const durationMs = readIntegerEnv("UST_NATIVE_AUDIO_RENDER_DURATION_MS", 500);
+const pollIntervalMs = readIntegerEnv("UST_NATIVE_AUDIO_RENDER_POLL_INTERVAL_MS", 10);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,

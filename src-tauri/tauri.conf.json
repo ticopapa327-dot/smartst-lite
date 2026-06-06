@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SmartST Lite",
+  "productName": "UST Desktop Client",
   "version": "0.1.4",
-  "identifier": "com.smartst.lite",
+  "identifier": "com.ust.lite",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -13,7 +13,7 @@
   "app": {
     "windows": [
       {
-        "title": "SmartST Lite",
+        "title": "视捷UST",
         "width": 1180,
         "height": 760,
         "minWidth": 980,
@@ -30,7 +30,7 @@
     "active": true,
     "targets": ["nsis"],
     "resources": {
-      "../native-worker/target/release/smartst-native-worker.exe": "bin/smartst-native-worker.exe"
+      "../native-worker/target/release/ust-native-worker.exe": "bin/ust-native-worker.exe"
     }
   }
 }

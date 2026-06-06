@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, LogEntry } from "../domain/types";
 import { isTauriRuntime } from "./configService";
 
-const LOG_STORAGE_KEY = "smartst-lite-logs";
+const LOG_STORAGE_KEY = "ust-desktop-client-logs";
 
 export async function writeLog(
   level: LogEntry["level"],
@@ -33,7 +33,7 @@ export async function writeLog(
   const next = [...current, entry].slice(-300);
   window.localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(next));
   console[level === "error" ? "error" : level === "warn" ? "warn" : "info"](
-    `[SmartST Lite] ${message}`,
+    `[视捷UST] ${message}`,
     context ?? {},
   );
 }

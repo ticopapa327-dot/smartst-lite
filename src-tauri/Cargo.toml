@@ -1,8 +1,8 @@
 [package]
-name = "smartst-lite"
+name = "ust-desktop-client"
 version = "0.1.4"
-description = "SmartST Lite Windows surgery teaching client"
-authors = ["SmartST Lite"]
+description = "UST Desktop Client for Windows surgery teaching"
+authors = ["UST Desktop Client"]
 license = "MIT"
 edition = "2021"
 rust-version = "1.80"

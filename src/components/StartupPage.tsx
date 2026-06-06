@@ -28,7 +28,7 @@ export function StartupPage({ onChooseMode }: StartupPageProps) {
             <ShieldCheck size={17} />
             轻量级手术示教 / 转播客户端
           </div>
-          <h1>SmartST Lite</h1>
+          <h1>视捷UST</h1>
           <p>
             面向手术室本地预览、远程示教互动和录像管理的 Windows 桌面客户端。
           </p>

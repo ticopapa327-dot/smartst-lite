@@ -1,4 +1,4 @@
-# SmartST Lite UI 视觉规范
+# 视捷UST UI 视觉规范
 
 > 强制参考来源：  
 > `D:\我的工作\AOV\SOP\shoushi-or-platform\doc\首视数字化手术室软件开发计划.md`  
@@ -6,7 +6,7 @@
 
 ## 1. 结论
 
-SmartST Lite 新阶段界面必须采用 `or-preview HMI palette v0.3`：冷灰蓝医疗设备控制屏风格。
+视捷UST 新阶段界面必须采用 `or-preview HMI palette v0.3`：冷灰蓝医疗设备控制屏风格。
 
 该视觉标准适用于：
 

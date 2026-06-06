@@ -18,14 +18,14 @@ use tauri::Manager;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const APP_DIR_NAME: &str = "SmartST Lite";
+const APP_DIR_NAME: &str = "UST Desktop Client";
 const CONFIG_FILE_NAME: &str = "config.json";
-const LOG_FILE_NAME: &str = "smartst-lite.log";
+const LOG_FILE_NAME: &str = "ust-desktop-client.log";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const DESKTOP_SMOKE_ENV: &str = "SMARTST_DESKTOP_SMOKE";
-const DESKTOP_SMOKE_OUTPUT_ENV: &str = "SMARTST_DESKTOP_SMOKE_OUTPUT";
-const DESKTOP_SMOKE_REQUIRE_PACKAGED_ENV: &str = "SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED";
-const DESKTOP_SMOKE_REQUIRE_AV_ENV: &str = "SMARTST_DESKTOP_SMOKE_REQUIRE_AV";
+const DESKTOP_SMOKE_ENV: &str = "UST_DESKTOP_SMOKE";
+const DESKTOP_SMOKE_OUTPUT_ENV: &str = "UST_DESKTOP_SMOKE_OUTPUT";
+const DESKTOP_SMOKE_REQUIRE_PACKAGED_ENV: &str = "UST_DESKTOP_SMOKE_REQUIRE_PACKAGED";
+const DESKTOP_SMOKE_REQUIRE_AV_ENV: &str = "UST_DESKTOP_SMOKE_REQUIRE_AV";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -447,9 +447,9 @@ fn workspace_root_dir() -> Result<PathBuf, String> {
 
 fn native_worker_executable_name() -> &'static str {
     if cfg!(windows) {
-        "smartst-native-worker.exe"
+        "ust-native-worker.exe"
     } else {
-        "smartst-native-worker"
+        "ust-native-worker"
     }
 }
 
@@ -609,7 +609,7 @@ fn env_truthy(name: &str) -> bool {
 fn desktop_smoke_output_path() -> PathBuf {
     std::env::var_os(DESKTOP_SMOKE_OUTPUT_ENV)
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("smartst-desktop-smoke-result.json"))
+        .unwrap_or_else(|| std::env::temp_dir().join("ust-desktop-smoke-result.json"))
 }
 
 fn run_desktop_smoke(app: &tauri::AppHandle) -> Result<Value, String> {
@@ -720,7 +720,7 @@ fn run_desktop_smoke(app: &tauri::AppHandle) -> Result<Value, String> {
     let finished_at = unix_timestamp_ms();
     Ok(json!({
         "status": "passed",
-        "schemaVersion": "smartst.desktop-smoke.v0.1",
+        "schemaVersion": "ust.desktop-smoke.v0.1",
         "startedAtUnixMs": started_at,
         "finishedAtUnixMs": finished_at,
         "elapsedMs": finished_at.saturating_sub(started_at),
@@ -905,7 +905,7 @@ fn main() {
                         Ok(result) => result,
                         Err(error) => json!({
                             "status": "failed",
-                            "schemaVersion": "smartst.desktop-smoke.v0.1",
+                            "schemaVersion": "ust.desktop-smoke.v0.1",
                             "error": error
                         }),
                     };
@@ -918,7 +918,7 @@ fn main() {
                     if let Err(error) = write_desktop_smoke_output(&output_path, &smoke_result) {
                         let fallback = json!({
                             "status": "failed",
-                            "schemaVersion": "smartst.desktop-smoke.v0.1",
+                            "schemaVersion": "ust.desktop-smoke.v0.1",
                             "error": error
                         });
                         let _ = write_desktop_smoke_output(&output_path, &fallback);
@@ -944,7 +944,7 @@ fn main() {
             stop_native_worker_session
         ])
         .run(tauri::generate_context!())
-        .expect("error while running SmartST Lite");
+        .expect("error while running UST Desktop Client");
 }
 
 #[cfg(test)]
@@ -997,9 +997,9 @@ mod tests {
             .unwrap_or_default();
 
         if cfg!(windows) {
-            assert_eq!(file_name, "smartst-native-worker.exe");
+            assert_eq!(file_name, "ust-native-worker.exe");
         } else {
-            assert_eq!(file_name, "smartst-native-worker");
+            assert_eq!(file_name, "ust-native-worker");
         }
 
         assert!(executable_path.to_string_lossy().contains("native-worker"));

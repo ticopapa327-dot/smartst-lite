@@ -1,13 +1,13 @@
 {
-  "schemaVersion": "smartst.or-agent.config.v0.1",
-  "role": "SmartST OR Agent",
+  "schemaVersion": "ust.or-agent.config.v0.1",
+  "role": "UST OR Agent",
   "serverUrl": "http://<OR-PC-LAN-IP>:4780",
   "controlApi": {
     "host": "127.0.0.1",
     "port": 4781
   },
   "nativeWorker": {
-    "executablePath": "C:\\Program Files\\SmartST\\or-agent\\smartst-native-worker.exe",
+    "executablePath": "C:\\Program Files\\UST\\or-agent\\ust-native-worker.exe",
     "launchMode": "service-managed",
     "videoPayloadQueueCapacity": 3,
     "audioPayloadQueueCapacity": 50
@@ -52,7 +52,7 @@
   ],
   "recording": {
     "enabled": true,
-    "rootDirectory": "D:\\SmartSTRecordings",
-    "manifestSchema": "smartst.recording-manifest.v0.1"
+    "rootDirectory": "D:\\USTRecordings",
+    "manifestSchema": "ust.recording-manifest.v0.1"
   }
 }

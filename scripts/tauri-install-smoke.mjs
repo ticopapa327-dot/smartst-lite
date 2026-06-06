@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(readFileSync(resolve(rootDir, "package.json"), "utf8"));
-const productName = "SmartST Lite";
-const executableName = "smartst-lite.exe";
-const workerName = "smartst-native-worker.exe";
+const productName = "UST Desktop Client";
+const executableName = "ust-desktop-client.exe";
+const workerName = "ust-native-worker.exe";
 const installerPath = resolve(
   rootDir,
   "src-tauri/target/release/bundle/nsis",
@@ -16,8 +16,8 @@ const installerPath = resolve(
 );
 const installBase = process.env.LOCALAPPDATA || process.env.TEMP || rootDir;
 const installDir =
-  process.env.SMARTST_NSIS_INSTALL_DIR ||
-  join(installBase, `SmartSTLiteNsisSmoke-${timestampForPath(new Date())}`);
+  process.env.UST_NSIS_INSTALL_DIR ||
+  join(installBase, `USTDesktopClientNsisSmoke-${timestampForPath(new Date())}`);
 
 assert(process.platform === "win32", "NSIS install smoke is Windows-only");
 assert(existsSync(installerPath), `NSIS installer is missing: ${installerPath}`);
@@ -116,7 +116,7 @@ async function cleanupExistingTestInstall() {
   const existingInstallLocation = normalizeRegistryPath(existing.installLocation);
   if (!isSafeTestInstallDir(existingInstallLocation)) {
     throw new Error(
-      `Refusing to uninstall non-test SmartST Lite installation: ${existing.installLocation}`,
+      `Refusing to uninstall non-test UST Desktop Client installation: ${existing.installLocation}`,
     );
   }
 
@@ -133,7 +133,7 @@ async function cleanupExistingTestInstall() {
 }
 
 function cleanupSafeTestDirectories() {
-  for (const prefix of ["SmartSTLiteNsisSmoke-", "SmartSTLiteNsisTest-"]) {
+  for (const prefix of ["USTDesktopClientNsisSmoke-", "USTDesktopClientNsisTest-"]) {
     const candidates = listLocalAppDataDirectories(prefix);
     for (const candidate of candidates) {
       if (isSafeTestInstallDir(candidate)) {
@@ -159,15 +159,15 @@ async function cleanupSafeShortcutLeftovers() {
     if (!shortcut.exists) continue;
     if (!isSafeTestInstallDir(shortcut.target ? dirname(shortcut.target) : "")) continue;
     await runPowerShell(
-      `Remove-Item -LiteralPath $env:SMARTST_SHORTCUT_PATH -Force -ErrorAction SilentlyContinue`,
-      { SMARTST_SHORTCUT_PATH: shortcut.path },
+      `Remove-Item -LiteralPath $env:UST_SHORTCUT_PATH -Force -ErrorAction SilentlyContinue`,
+      { UST_SHORTCUT_PATH: shortcut.path },
     );
   }
 }
 
 async function queryInstallRegistry() {
   const script = `
-$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SmartST Lite'
+$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\UST Desktop Client'
 $item = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
 if ($null -eq $item) {
   'null'
@@ -188,8 +188,8 @@ async function queryShortcutState() {
   const script = `
 $shell = New-Object -ComObject WScript.Shell
 $items = @(
-  [PSCustomObject]@{ name = 'desktop'; path = [System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'SmartST Lite.lnk') },
-  [PSCustomObject]@{ name = 'startMenu'; path = [System.IO.Path]::Combine([Environment]::GetFolderPath('StartMenu'), 'Programs\\SmartST Lite.lnk') }
+  [PSCustomObject]@{ name = 'desktop'; path = [System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'UST Desktop Client.lnk') },
+  [PSCustomObject]@{ name = 'startMenu'; path = [System.IO.Path]::Combine([Environment]::GetFolderPath('StartMenu'), 'Programs\\UST Desktop Client.lnk') }
 )
 $result = @{}
 foreach ($item in $items) {
@@ -336,15 +336,15 @@ async function smokeWorker(workerPath) {
 async function smokeDesktopApp(mainExe) {
   const outputPath = join(
     tmpdir(),
-    `smartst-desktop-smoke-${timestampForPath(new Date())}.json`,
+    `ust-desktop-smoke-${timestampForPath(new Date())}.json`,
   );
   const result = await run(mainExe, [], {
     timeoutMs: 120000,
     env: {
-      SMARTST_DESKTOP_SMOKE: "1",
-      SMARTST_DESKTOP_SMOKE_OUTPUT: outputPath,
-      SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED: "1",
-      SMARTST_DESKTOP_SMOKE_REQUIRE_AV: "1",
+      UST_DESKTOP_SMOKE: "1",
+      UST_DESKTOP_SMOKE_OUTPUT: outputPath,
+      UST_DESKTOP_SMOKE_REQUIRE_PACKAGED: "1",
+      UST_DESKTOP_SMOKE_REQUIRE_AV: "1",
     },
   });
 
@@ -482,7 +482,7 @@ function assertSafeTestInstallDir(directory) {
 
 function isSafeTestInstallDir(directory) {
   const normalized = normalizeRegistryPath(directory);
-  return /SmartSTLiteNsis(?:Smoke|Test)-\d+/.test(normalized);
+  return /USTDesktopClientNsis(?:Smoke|Test)-\d+/.test(normalized);
 }
 
 function timestampForPath(date) {

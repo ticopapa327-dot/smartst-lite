@@ -1,11 +1,11 @@
-# SmartST Lite 真实连通性最小联调
+# 视捷UST 真实连通性最小联调
 
 > 日期：2026-06-06
 > 范围：手术室电脑一体机部署的最小真实联调，不涉及网站发布。
 
 ## 1. 当前工作区边界
 
-本轮只处理 SmartST Lite 开发联调。以下本地文件属于网站文案准备或其目录入口，不纳入真实连通性提交：
+本轮只处理 视捷UST 开发联调。以下本地文件属于网站文案准备或其目录入口，不纳入真实连通性提交：
 
 - `docs/README.md`
 - `docs/website-product-introduction.md`
@@ -36,7 +36,7 @@
     ws://<OR-PC-LAN-IP>:7880
     TCP 7880 / TCP 7881 / UDP 7882
 
-  SmartST business service PoC
+  UST business service PoC
     http://<OR-PC-LAN-IP>:4780
     端点、房间、token、手机 observer 权限
 
@@ -44,7 +44,7 @@
     http://<OR-PC-LAN-IP>:5175
     手机浏览器单向收看入口
 
-  SmartST Desktop Client / OR Agent
+  UST Desktop Client / OR Agent
     本机 UI、Native Worker 和后续采集控制
 ```
 
@@ -244,8 +244,8 @@ npm run test:all:poc
 
 | 组件 | 端口 | 协议 | 方向 | 当前用途 |
 | --- | ---: | --- | --- | --- |
-| SmartST business service | 4780 | TCP/HTTP | 入站 | 呼叫、room、token、observer |
-| SmartST OR Agent control | 4781 | TCP/HTTP | 本机优先 | 设备、采集、录像控制；正式部署可限制为本机或可信网段 |
+| UST business service | 4780 | TCP/HTTP | 入站 | 呼叫、room、token、observer |
+| UST OR Agent control | 4781 | TCP/HTTP | 本机优先 | 设备、采集、录像控制；正式部署可限制为本机或可信网段 |
 | web-observer H5 | 5175 | TCP/HTTP | 入站 | PoC 手机观察页；生产建议由 Server 托管或反代 |
 | LiveKit HTTP/WebSocket | 7880 | TCP | 入站 | WebSocket、RoomService |
 | LiveKit ICE TCP | 7881 | TCP | 入站 | WebRTC TCP fallback |

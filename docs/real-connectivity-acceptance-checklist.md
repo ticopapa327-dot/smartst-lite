@@ -1,4 +1,4 @@
-# SmartST Lite 真实连通性最小验收表
+# 视捷UST 真实连通性最小验收表
 
 > 日期：2026-06-06
 > 范围：进入开发阶段前的最小可验收项，不替代正式医院现场验收。
@@ -21,7 +21,7 @@
 | A8 | 桌面端业务呼叫入会 | 工作台“呼叫并入会”或 `or-agent-publisher-smoke` | 基础自动化已通过；双终端人工待测 | 呼叫同意后入会，默认显示 `mediaPolicy.defaultChannelId` 对应画面 |
 | A9 | OR Agent publisher adapter | `npm run connectivity:or-lab:or-agent-publisher-smoke` | smoke 已通过；生产 adapter 待实现 | OR Agent 发布真实 `video:field-camera` 和 `audio:or-room` |
 | A10 | 双向音频 | 手术室端与示教室端 30 分钟交互 | 未完成 | 音频稳定，回声抑制策略明确，无明显回声或断续 |
-| A11 | Windows Service | 安装后重启 Windows | 未完成 | SmartST Server 和 OR Agent 自动启动，Desktop Client 关闭不影响服务 |
+| A11 | Windows Service | 安装后重启 Windows | 未完成 | UST Server 和 OR Agent 自动启动，Desktop Client 关闭不影响服务 |
 | A12 | 防火墙放行 | 远端设备访问 4780/5175/7880/7881/7882 | 未完成 | 远端 TCP/UDP 可达；跨网段有 TURN/TLS 策略 |
 
 ## 停止条件
@@ -30,11 +30,11 @@
 - LiveKit API secret 出现在 Desktop Client、OR Agent、H5、日志或导出配置中。
 - 手机并发导致 OR Agent 为每个手机启动独立采集、推流或转码。
 - 默认画面依赖设备枚举顺序或 LiveKit track 到达顺序，而不是业务服务 `mediaPolicy`。
-- Windows Service 安装、卸载或防火墙规则脚本可能影响非 SmartST 文件、用户录像目录或其他系统服务。
+- Windows Service 安装、卸载或防火墙规则脚本可能影响非 UST 文件、用户录像目录或其他系统服务。
 
 ## 下一步验收优先级
 
 1. 将当前 PPM/WAV 文件桥接 publisher 替换为无文件落地的 native SDK / FFI / WHIP adapter。
 2. 用两台真实终端验证示教室订阅、双向音频和手机跨设备只读收看。
-3. 补齐 SmartST Server 预创建 LiveKit room 的生产逻辑，Desktop Client 不得持有 LiveKit secret。
+3. 补齐 UST Server 预创建 LiveKit room 的生产逻辑，Desktop Client 不得持有 LiveKit secret。
 4. 实现 Windows Service 安装和防火墙规则 preflight，再做重启后验收。

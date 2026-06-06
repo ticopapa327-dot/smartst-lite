@@ -30,7 +30,7 @@ let roomClient;
 let roomId;
 
 try {
-  roomId = `smartst-media-${timestampForPath(startedAt)}`;
+  roomId = `ust-media-${timestampForPath(startedAt)}`;
   const roomCode = `ST-MEDIA-${timestampForPath(startedAt).slice(0, 8)}-${timestampForPath(startedAt).slice(8)}`;
   roomClient = new RoomServiceClient(
     livekitApiHostFromUrl(config.livekitUrl),
@@ -45,7 +45,7 @@ try {
     departureTimeout: 30,
     maxParticipants: 16,
     metadata: JSON.stringify({
-      purpose: "smartst-livekit-media-smoke",
+      purpose: "ust-livekit-media-smoke",
       roomCode,
       createdAt: startedAt.toISOString(),
     }),
@@ -153,7 +153,7 @@ try {
 
   const result = {
     status: "passed",
-    schemaVersion: "smartst.livekit-media-smoke.v0.1",
+    schemaVersion: "ust.livekit-media-smoke.v0.1",
     livekitUrl: config.livekitUrl,
     businessUrl: config.businessUrl,
     roomId,
@@ -205,7 +205,7 @@ try {
   await dispose().catch(() => undefined);
   printJson({
     status: "failed",
-    schemaVersion: "smartst.livekit-media-smoke.v0.1",
+    schemaVersion: "ust.livekit-media-smoke.v0.1",
     livekitUrl: config.livekitUrl,
     businessUrl: config.businessUrl,
     error: error instanceof Error ? error.name : "Error",
@@ -223,20 +223,20 @@ async function readConfig() {
   const localKeys = await readLocalKeys();
   return {
     businessUrl: normalizeBaseUrl(
-      process.env.SMARTST_LAB_BUSINESS_URL ||
-        process.env.SMARTST_BUSINESS_URL ||
+      process.env.UST_LAB_BUSINESS_URL ||
+        process.env.UST_BUSINESS_URL ||
         processState.businessUrl ||
         "http://127.0.0.1:4780",
     ),
     livekitUrl: process.env.LIVEKIT_URL?.trim() || processState.livekitUrl || "ws://127.0.0.1:7880",
     apiKey: process.env.LIVEKIT_API_KEY?.trim() || localKeys.apiKey,
     apiSecret: process.env.LIVEKIT_API_SECRET?.trim() || localKeys.apiSecret,
-    observerCount: Number.parseInt(process.env.SMARTST_MEDIA_SMOKE_OBSERVERS || "3", 10),
-    durationMs: Number.parseInt(process.env.SMARTST_MEDIA_SMOKE_DURATION_MS || "2500", 10),
-    timeoutMs: Number.parseInt(process.env.SMARTST_MEDIA_SMOKE_TIMEOUT_MS || "15000", 10),
-    frameRate: Number.parseInt(process.env.SMARTST_MEDIA_SMOKE_FPS || "10", 10),
-    videoWidth: Number.parseInt(process.env.SMARTST_MEDIA_SMOKE_WIDTH || "320", 10),
-    videoHeight: Number.parseInt(process.env.SMARTST_MEDIA_SMOKE_HEIGHT || "180", 10),
+    observerCount: Number.parseInt(process.env.UST_MEDIA_SMOKE_OBSERVERS || "3", 10),
+    durationMs: Number.parseInt(process.env.UST_MEDIA_SMOKE_DURATION_MS || "2500", 10),
+    timeoutMs: Number.parseInt(process.env.UST_MEDIA_SMOKE_TIMEOUT_MS || "15000", 10),
+    frameRate: Number.parseInt(process.env.UST_MEDIA_SMOKE_FPS || "10", 10),
+    videoWidth: Number.parseInt(process.env.UST_MEDIA_SMOKE_WIDTH || "320", 10),
+    videoHeight: Number.parseInt(process.env.UST_MEDIA_SMOKE_HEIGHT || "180", 10),
   };
 }
 

@@ -99,7 +99,7 @@ export function CallPanel({ defaultChannel, onLiveKitDraft }: CallPanelProps) {
 
       <div className="livekit-form call-service-form">
         <label>
-          SmartST Server
+          UST Server
           <input
             className="hmi-input"
             onChange={(event) => setBusinessUrl(event.target.value)}

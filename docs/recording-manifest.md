@@ -1,4 +1,4 @@
-# SmartST Lite Recording Manifest v0.1
+# 视捷UST Recording Manifest v0.1
 
 `RecordingManifest` is the metadata contract for local surgical recording files.
 
@@ -6,7 +6,7 @@ The current PoC intentionally avoids patient data and writes `patientBinding.sta
 
 ## Required Fields
 
-- `schemaVersion`: currently `smartst.recording-manifest.v0.1`.
+- `schemaVersion`: currently `ust.recording-manifest.v0.1`.
 - `recordingId`: locally unique recording identifier.
 - `createdAt` and `updatedAt`: ISO timestamps.
 - `patientBinding`: HIS binding state; no real patient data in PoC.

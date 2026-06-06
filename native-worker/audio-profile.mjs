@@ -6,16 +6,16 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera")
+const channels = (process.env.UST_NATIVE_SESSION_CHANNELS || "field-camera")
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean);
-const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
-const durationMs = readIntegerEnv("SMARTST_NATIVE_AUDIO_PROFILE_DURATION_MS", 2000);
-const sampleIntervalMs = readIntegerEnv("SMARTST_NATIVE_AUDIO_PROFILE_SAMPLE_INTERVAL_MS", 500);
-const audioPayloadQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", 50);
-const label = process.env.SMARTST_NATIVE_AUDIO_PROFILE_LABEL || "default";
-const outputPath = process.env.SMARTST_NATIVE_AUDIO_PROFILE_OUTPUT || "";
+const audioIndex = readIntegerEnv("UST_NATIVE_AUDIO_INDEX", 0);
+const durationMs = readIntegerEnv("UST_NATIVE_AUDIO_PROFILE_DURATION_MS", 2000);
+const sampleIntervalMs = readIntegerEnv("UST_NATIVE_AUDIO_PROFILE_SAMPLE_INTERVAL_MS", 500);
+const audioPayloadQueueCapacity = readIntegerEnv("UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", 50);
+const label = process.env.UST_NATIVE_AUDIO_PROFILE_LABEL || "default";
+const outputPath = process.env.UST_NATIVE_AUDIO_PROFILE_OUTPUT || "";
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,

@@ -1,7 +1,7 @@
-# SmartST 三包部署标准
+# UST 三包部署标准
 
 > 日期：2026-06-06
-> 适用范围：SmartST Lite 后续开发、安装器设计、现场部署和测试验收。
+> 适用范围：视捷UST 后续开发、安装器设计、现场部署和测试验收。
 > 结论：服务端程序、手术室后端和桌面客户端必须逻辑分离、独立生命周期管理；物理部署可以同机，也可以分机。
 
 ## 1. 决策
@@ -10,24 +10,24 @@
 
 后续开发按三个部署单元推进：
 
-1. `SmartST Server`
+1. `UST Server`
    - LiveKit Server。
-   - SmartST 业务服务。
+   - UST 业务服务。
    - 房间、呼叫、JWT、权限、人数限制。
    - 手机 H5 访问码和 subscribe-only token。
    - 可选 HIS、录像索引、上传、审计。
    - 只在该单元保存 `LIVEKIT_API_SECRET`。
 
-2. `SmartST OR Agent`
+2. `UST OR Agent`
    - USB 采集卡、摄像机、音频设备和 PTZ 控制。
    - Native Media Worker 生命周期管理。
    - 本地预览、录像、导出、设备恢复。
    - 向 LiveKit 发布默认画面和音频，或向发布组件提供媒体帧。
    - 不保存 LiveKit API secret，只使用业务服务签发的短期 token。
 
-3. `SmartST Desktop Client`
+3. `UST Desktop Client`
    - 手术室 UI、示教室 UI、配置和人工操作入口。
-   - 调用 `SmartST Server` 和 `SmartST OR Agent`。
+   - 调用 `UST Server` 和 `UST OR Agent`。
    - UI 崩溃不应导致 LiveKit、业务服务、采集或录像中断。
    - 不保存 LiveKit API secret、HIS 凭据或 FTP 密码。
 
@@ -39,14 +39,14 @@
 
 ```text
 手术室 Windows 电脑
-  SmartST Server
+  UST Server
     livekit-server.exe
-    smartst-business-service.exe 或 node service
-  SmartST OR Agent
-    smartst-or-agent.exe
-    smartst-native-worker.exe
-  SmartST Desktop Client
-    smartst-lite.exe
+    ust-business-service.exe 或 node service
+  UST OR Agent
+    ust-or-agent.exe
+    ust-native-worker.exe
+  UST Desktop Client
+    ust-desktop-client.exe
 ```
 
 特点：
@@ -62,14 +62,14 @@
 
 ```text
 院内服务节点
-  SmartST Server
+  UST Server
 
 手术室 Windows 电脑
-  SmartST OR Agent
-  SmartST Desktop Client
+  UST OR Agent
+  UST Desktop Client
 
 示教室 Windows 电脑
-  SmartST Desktop Client
+  UST Desktop Client
 ```
 
 特点：
@@ -84,10 +84,10 @@
 
 ```text
 示教室 Windows 电脑
-  SmartST Desktop Client
+  UST Desktop Client
 
 Android 会议平板
-  SmartST Tablet Client
+  UST Tablet Client
 
 手机
   web-observer H5
@@ -103,9 +103,9 @@ Android 会议平板
 
 正式环境要求：
 
-- `SmartST Server` 作为 Windows Service 运行。
-- `SmartST OR Agent` 作为 Windows Service 或受控后台进程运行。
-- `SmartST Desktop Client` 作为普通桌面应用运行。
+- `UST Server` 作为 Windows Service 运行。
+- `UST OR Agent` 作为 Windows Service 或受控后台进程运行。
+- `UST Desktop Client` 作为普通桌面应用运行。
 - Desktop Client 可以显示服务状态、发起重启请求和打开日志，但不直接持有服务密钥。
 - UI 关闭时，本地录像和 LiveKit 房间服务不得被强制结束。
 
@@ -121,21 +121,21 @@ Android 会议平板
 安装器必须支持角色选择：
 
 ```text
-[ ] SmartST Server
-[ ] SmartST OR Agent
-[ ] SmartST Desktop Client
+[ ] UST Server
+[ ] UST OR Agent
+[ ] UST Desktop Client
 ```
 
 组合建议：
 
 - 手术室电脑默认安装三项。
-- 示教室电脑只安装 `SmartST Desktop Client`。
-- 独立服务节点只安装 `SmartST Server`。
+- 示教室电脑只安装 `UST Desktop Client`。
+- 独立服务节点只安装 `UST Server`。
 
-安装 `SmartST Server` 或 `SmartST OR Agent` 时必须：
+安装 `UST Server` 或 `UST OR Agent` 时必须：
 
 - 要求管理员权限。
-- 写入 `C:\ProgramData\SmartST\`。
+- 写入 `C:\ProgramData\UST\`。
 - 创建 Windows Service。
 - 创建 Windows 防火墙规则。
 - 生成或导入 `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET`。
@@ -147,15 +147,15 @@ Android 会议平板
 默认一体机配置：
 
 ```text
-SmartST Server
+UST Server
   businessApi: http://0.0.0.0:4780
   livekitUrl: ws://<手术室固定IP>:7880
   livekitApi: http://127.0.0.1:7880
   livekitUdpMuxPort: 7882
 
-SmartST OR Agent
+UST OR Agent
   controlApi: http://127.0.0.1:4781
-  mediaWorkerPath: C:\Program Files\SmartST\or-agent\smartst-native-worker.exe
+  mediaWorkerPath: C:\Program Files\UST\or-agent\ust-native-worker.exe
 
 Desktop Client
   serverUrl: http://<手术室固定IP>:4780
@@ -168,9 +168,9 @@ Desktop Client
 
 | 角色 | 模板 |
 | --- | --- |
-| SmartST Server | `deploy/config/smartst-server.example.json` |
-| SmartST OR Agent | `deploy/config/smartst-or-agent.example.json` |
-| SmartST Desktop Client | `deploy/config/smartst-desktop-client.example.json` |
+| UST Server | `deploy/config/ust-server.example.json` |
+| UST OR Agent | `deploy/config/ust-or-agent.example.json` |
+| UST Desktop Client | `deploy/config/ust-desktop-client.example.json` |
 
 配置模板必须通过：
 
@@ -189,7 +189,7 @@ apps/
   desktop-client/
   web-observer/
 services/
-  smartst-server/
+  ust-server/
 agents/
   or-agent/
 workers/
@@ -203,8 +203,8 @@ infra/
 
 迁移顺序：
 
-1. 把 `server-poc` 固化为 `SmartST Server` 原型。
-2. 把 Tauri 后端中 Native Worker 管理能力下沉到 `SmartST OR Agent`。
+1. 把 `server-poc` 固化为 `UST Server` 原型。
+2. 把 Tauri 后端中 Native Worker 管理能力下沉到 `UST OR Agent`。
 3. Desktop Client 改为调用 Server 和 OR Agent，不直接承担服务端职责。
 4. NSIS 增加角色安装和 Windows Service 管理。
 5. 增加一体机 preflight：Server、LiveKit、OR Agent、Native Worker、端口、防火墙、默认 room。
@@ -213,7 +213,7 @@ infra/
 
 一体机部署通过标准：
 
-- 重启 Windows 后 `SmartST Server` 和 `SmartST OR Agent` 自动启动。
+- 重启 Windows 后 `UST Server` 和 `UST OR Agent` 自动启动。
 - Desktop Client 关闭后，Server 和 OR Agent 仍保持运行。
 - `server:poc:livekit-preflight` 或等价生产 preflight 通过。
 - OR Agent 能枚举采集设备并启动默认采集会话。

@@ -125,7 +125,7 @@ async function handleRequest(request, response, state) {
   if (request.method === "GET" && url.pathname === "/health") {
     sendJson(response, 200, {
       ok: true,
-      service: "smartst-business-service-poc",
+      service: "ust-business-service-poc",
       time: new Date().toISOString(),
     });
     return;
@@ -783,10 +783,10 @@ const isDirectRun =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
-  const port = Number.parseInt(process.env.SMARTST_POC_PORT ?? "4780", 10);
-  const host = process.env.SMARTST_POC_HOST ?? "127.0.0.1";
+  const port = Number.parseInt(process.env.UST_POC_PORT ?? "4780", 10);
+  const host = process.env.UST_POC_HOST ?? "127.0.0.1";
   const { server } = createBusinessServiceServer();
   server.listen(port, host, () => {
-    console.log(`SmartST business service PoC listening at http://${host}:${port}`);
+    console.log(`UST business service PoC listening at http://${host}:${port}`);
   });
 }

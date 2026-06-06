@@ -12,9 +12,9 @@ import {
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(
   rootDir,
-  process.env.SMARTST_NATIVE_EXPORT_MANIFEST_PATH || "native-worker/.tmp/export-artifact-manifest.json",
+  process.env.UST_NATIVE_EXPORT_MANIFEST_PATH || "native-worker/.tmp/export-artifact-manifest.json",
 );
-const maxArtifactAgeMs = readIntegerEnv("SMARTST_NATIVE_EXPORT_MANIFEST_MAX_AGE_MS", 300000);
+const maxArtifactAgeMs = readIntegerEnv("UST_NATIVE_EXPORT_MANIFEST_MAX_AGE_MS", 300000);
 const inspectedAtMs = Date.now();
 
 const artifactSpecs = [
@@ -23,7 +23,7 @@ const artifactSpecs = [
     mediaKind: "video",
     fileFormat: "pgm",
     defaultPath: "native-worker/.tmp/video-payload-export.pgm",
-    envPath: "SMARTST_NATIVE_VIDEO_PGM_EXPORT_PATH",
+    envPath: "UST_NATIVE_VIDEO_PGM_EXPORT_PATH",
     parser: parsePgm,
     summarize: (parsed) => ({
       width: parsed.width,
@@ -37,7 +37,7 @@ const artifactSpecs = [
     mediaKind: "video",
     fileFormat: "ppm",
     defaultPath: "native-worker/.tmp/video-payload-export.ppm",
-    envPath: "SMARTST_NATIVE_VIDEO_PPM_EXPORT_PATH",
+    envPath: "UST_NATIVE_VIDEO_PPM_EXPORT_PATH",
     parser: parsePpm,
     summarize: (parsed) => ({
       width: parsed.width,
@@ -51,7 +51,7 @@ const artifactSpecs = [
     mediaKind: "audio",
     fileFormat: "wav",
     defaultPath: "native-worker/.tmp/audio-payload-export.wav",
-    envPath: "SMARTST_NATIVE_AUDIO_WAV_EXPORT_PATH",
+    envPath: "UST_NATIVE_AUDIO_WAV_EXPORT_PATH",
     parser: parseWavHeader,
     summarize: (parsed) => ({
       audioFormat: parsed.audioFormat,
@@ -94,7 +94,7 @@ assert(
 );
 
 const manifest = {
-  schemaVersion: "smartst.native-export-artifacts.v0.1",
+  schemaVersion: "ust.native-export-artifacts.v0.1",
   generatedAt: new Date().toISOString(),
   source: {
     kind: "native-worker-export-smoke",

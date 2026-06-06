@@ -1,8 +1,8 @@
 # 桌面版手术示教软件开发计划
 
-> 适用仓库：`D:\我的工作\AOV\SmartST Lite`。  
+> 适用仓库：`<repo-root>`
 > 当前基线：Tauri 2 + React + TypeScript + Rust，当前主线为 USB-first 工作台、LiveKit UI PoC、真实 JWT smoke、Native Worker 控制面、USB 通道绑定和安装版 smoke；旧 ONVIF/RTSP MVP 已从当前产品入口移除。
-> 计划原则：先验证硬件和媒体链路，再做完整 UI；先保证本地预览和录像，再接远程互动；SmartST Server、SmartST OR Agent、Desktop Client 三包逻辑分离；患者信息和文件管理从第一天按敏感数据处理。
+> 计划原则：先验证硬件和媒体链路，再做完整 UI；先保证本地预览和录像，再接远程互动；UST Server、UST OR Agent、Desktop Client 三包逻辑分离；患者信息和文件管理从第一天按敏感数据处理。
 
 ## 1. 目标版本定义
 
@@ -41,7 +41,7 @@
 - UI 视觉基线确认：采用 `or-preview HMI palette v0.3`，不得另起蓝色科技屏或 BI 风格。
 - 4 路 USB 采集压力测试记录。
 - PTZ 控制协议确认。
-- SmartST Server 一体机/分机部署模式确认。
+- UST Server 一体机/分机部署模式确认。
 - LiveKit 本地/院内服务节点连通性测试。
 - HIS 接口方式确认：HL7/FHIR/WebService/DB/手工。
 
@@ -74,12 +74,12 @@
 
 周期：1 到 2 周。
 
-目标：把当前 PoC 从“桌面端直接托管所有后端能力”调整为 SmartST Server、SmartST OR Agent、Desktop Client 三个部署单元。
+目标：把当前 PoC 从“桌面端直接托管所有后端能力”调整为 UST Server、UST OR Agent、Desktop Client 三个部署单元。
 
 交付物：
 
-- `SmartST Server` 原型：封装当前 `server-poc`，明确 LiveKit Server 配置、API secret 存储、RoomService preflight 和业务服务端口。
-- `SmartST OR Agent` 原型：封装 Native Worker 生命周期、设备枚举、start/status/stop/drain 控制面，预留 Windows Service。
+- `UST Server` 原型：封装当前 `server-poc`，明确 LiveKit Server 配置、API secret 存储、RoomService preflight 和业务服务端口。
+- `UST OR Agent` 原型：封装 Native Worker 生命周期、设备枚举、start/status/stop/drain 控制面，预留 Windows Service。
 - Desktop Client 调用边界：UI 通过 Server API 和 OR Agent API 工作，不直接保存 API secret，不直接承担长时间服务生命周期。
 - 安装器角色设计：Server、OR Agent、Desktop Client 可单独选择，手术室电脑默认三项同装。
 - 一体机 preflight：LiveKit、业务服务、OR Agent、Native Worker、端口、防火墙、默认 room。
@@ -90,7 +90,7 @@
 - 将 `server:poc:livekit-preflight` 扩展为可检查本机一体机环境。
 - 设计 Windows Service 安装方式，优先评估 WinSW 或原生 service wrapper。
 - 将 Tauri 后端中 Native Worker session 管理边界迁移为 OR Agent API 设计。
-- 明确 `C:\ProgramData\SmartST\` 配置、日志、密钥、录像索引和权限。
+- 明确 `C:\ProgramData\UST\` 配置、日志、密钥、录像索引和权限。
 
 验收标准：
 
@@ -132,7 +132,7 @@
 
 交付物：
 
-- SmartST Server 最小版：端点注册、呼叫、应答、拒绝、token 签发、LiveKit preflight。
+- UST Server 最小版：端点注册、呼叫、应答、拒绝、token 签发、LiveKit preflight。
 - LiveKit 接入：房间连接、发布主画面、订阅远端画面、双向语音。
 - 仅收看/交互模式。
 - 参与人数上限。
@@ -143,7 +143,7 @@
 关键任务：
 
 - 增加 `livekit-client`。
-- SmartST Server 签发短期 token，客户端和 OR Agent 不保存 LiveKit API secret。
+- UST Server 签发短期 token，客户端和 OR Agent 不保存 LiveKit API secret。
 - 建立手术室端在线注册和示教室端呼叫流程。
 - 使用 LiveKit 权限区分 `canPublish`、`canSubscribe`、`canPublishData`。
 - 实现示教室仅收看模式：不能发布麦克风/摄像头。
@@ -261,7 +261,7 @@
 交付物：
 
 - 院内部署文档。
-- SmartST Server / SmartST OR Agent / Desktop Client 角色安装脚本。
+- UST Server / UST OR Agent / Desktop Client 角色安装脚本。
 - Windows Service 安装、升级、卸载和防火墙规则脚本。
 - 日志与审计。
 - 安全配置基线。

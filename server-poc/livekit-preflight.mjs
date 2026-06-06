@@ -10,7 +10,7 @@ const config = readConfig();
 if (config.missingEnv.length > 0) {
   printJson({
     status: "blocked",
-    schemaVersion: "smartst.livekit-preflight.v0.1",
+    schemaVersion: "ust.livekit-preflight.v0.1",
     error: "missing-livekit-env",
     message: "LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required for real LiveKit preflight.",
     missingEnv: config.missingEnv,
@@ -20,14 +20,14 @@ if (config.missingEnv.length > 0) {
 }
 
 const roomName =
-  process.env.SMARTST_LIVEKIT_PREFLIGHT_ROOM ||
-  `smartst-preflight-${timestampForPath(startedAt)}-${randomUUID().slice(0, 8)}`;
+  process.env.UST_LIVEKIT_PREFLIGHT_ROOM ||
+  `ust-preflight-${timestampForPath(startedAt)}-${randomUUID().slice(0, 8)}`;
 const roomCode =
-  process.env.SMARTST_LIVEKIT_PREFLIGHT_ROOM_CODE ||
+  process.env.UST_LIVEKIT_PREFLIGHT_ROOM_CODE ||
   `ST-LK-${timestampForPath(startedAt).slice(0, 8)}`;
-const keepRoom = envTruthy("SMARTST_LIVEKIT_PREFLIGHT_KEEP_ROOM");
+const keepRoom = envTruthy("UST_LIVEKIT_PREFLIGHT_KEEP_ROOM");
 const requestTimeoutMs = Number.parseInt(
-  process.env.SMARTST_LIVEKIT_PREFLIGHT_TIMEOUT_MS || "10000",
+  process.env.UST_LIVEKIT_PREFLIGHT_TIMEOUT_MS || "10000",
   10,
 );
 
@@ -48,7 +48,7 @@ try {
     departureTimeout: 20,
     maxParticipants: 4,
     metadata: JSON.stringify({
-      purpose: "smartst-livekit-preflight",
+      purpose: "ust-livekit-preflight",
       createdAt: startedAt.toISOString(),
     }),
   });
@@ -127,7 +127,7 @@ try {
 
   printJson({
     status: "passed",
-    schemaVersion: "smartst.livekit-preflight.v0.1",
+    schemaVersion: "ust.livekit-preflight.v0.1",
     livekitUrl: config.livekitUrl,
     livekitApiHost,
     roomName,
@@ -156,7 +156,7 @@ try {
   const cleanupError = await cleanupPreflightRoom();
   printJson({
     status: "failed",
-    schemaVersion: "smartst.livekit-preflight.v0.1",
+    schemaVersion: "ust.livekit-preflight.v0.1",
     livekitUrl: config.livekitUrl || undefined,
     roomName,
     error: error instanceof Error ? error.name : "Error",

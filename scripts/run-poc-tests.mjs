@@ -39,17 +39,17 @@ const startedAt = Date.now();
 
 for (const args of checks) {
   const label = `npm ${args.join(" ")}`;
-  console.log(`\n[SmartST PoC] START ${label}`);
+  console.log(`\n[UST PoC] START ${label}`);
   const exitCode = await runNpm(args);
   if (exitCode !== 0) {
-    console.error(`[SmartST PoC] FAIL ${label} exit=${exitCode}`);
+    console.error(`[UST PoC] FAIL ${label} exit=${exitCode}`);
     process.exit(exitCode);
   }
-  console.log(`[SmartST PoC] PASS ${label}`);
+  console.log(`[UST PoC] PASS ${label}`);
 }
 
 const durationSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-console.log(`\n[SmartST PoC] ALL PASS in ${durationSeconds}s`);
+console.log(`\n[UST PoC] ALL PASS in ${durationSeconds}s`);
 
 function runNpm(args) {
   if (npmCliPath) {

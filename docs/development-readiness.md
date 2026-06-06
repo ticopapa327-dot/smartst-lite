@@ -1,6 +1,6 @@
-# SmartST Lite 开发启动基线
+# 视捷UST 开发启动基线
 
-> 适用仓库：`D:\我的工作\AOV\SmartST Lite`  
+> 适用仓库：`<repo-root>`
 > 日期：2026-06-05  
 > 目的：把当前文档、代码基线、架构决策和第一阶段开发任务统一起来，作为进入开发阶段的入口。
 
@@ -9,16 +9,16 @@
 开发方向采用：
 
 ```text
-SmartST Server
+UST Server
   LiveKit Server
   业务服务
   JWT / 呼叫 / 权限 / 审计
 
-SmartST OR Agent
+UST OR Agent
   Native Media Worker
   USB 采集 / PTZ / 录像 / 设备恢复
 
-SmartST Desktop Client
+UST Desktop Client
   手术室 UI
   示教室 UI
   LiveKit 订阅/交互 UI
@@ -40,8 +40,8 @@ Android 会议平板客户端
 
 - USB UVC/USB 采集卡是默认视频输入；RTSP/SRT 是高级兼容或备选输入。
 - LiveKit 只做实时房间、权限、音视频转发、Data/RPC 和可选 Egress。
-- SmartST Server 负责 LiveKit 服务、token、呼叫、HIS、文件、上传、审计和人数控制。
-- SmartST OR Agent 负责 Windows 本地采集、Native Worker、编码、录像、PTZ、设备恢复。
+- UST Server 负责 LiveKit 服务、token、呼叫、HIS、文件、上传、审计和人数控制。
+- UST OR Agent 负责 Windows 本地采集、Native Worker、编码、录像、PTZ、设备恢复。
 - Desktop Client 只做 UI 和人工操作入口；UI 关闭不应结束 Server 或 OR Agent。
 - 手机端不安装客户端，只做 H5 单向收看，不发布音频/视频/Data。
 - 手机多并发必须由 LiveKit/SFU 转发；手术室端只发布一次默认画面。
@@ -78,7 +78,7 @@ Android 会议平板客户端
 - `server-poc` 已实现端点、呼叫、room、mock token、真实 JWT smoke、LiveKit preflight smoke。
 - `web-observer-poc` 已实现手机 H5 subscribe-only PoC。
 - Native Worker 已具备 Media Foundation/WASAPI 枚举、短时采集、payload queue、drain、导出和 backpressure smoke。
-- 尚未完成 SmartST Server / SmartST OR Agent 的正式 Windows Service 化拆分。
+- 尚未完成 UST Server / UST OR Agent 的正式 Windows Service 化拆分。
 
 不能误判：
 
@@ -129,7 +129,7 @@ web-observer-poc/
 apps/desktop-client
 apps/android-tablet
 apps/web-observer
-services/smartst-server
+services/ust-server
 agents/or-agent
 workers/native-media-worker
 packages/contracts
@@ -201,7 +201,7 @@ infra/windows-service
 
 任务：
 
-- 独立 `smartst-media-worker.exe`。
+- 独立 `ust-media-worker.exe`。
 - IPC 控制：start / stop / join / publishSynthetic。
 - 发布 synthetic 视频帧和测试音频到 LiveKit。
 - UI 可启动、停止、重启 Worker。

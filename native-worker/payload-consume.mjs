@@ -5,15 +5,15 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera,endoscope")
+const channels = (process.env.UST_NATIVE_SESSION_CHANNELS || "field-camera,endoscope")
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean);
-const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
-const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
-const videoFrameQueueCapacity = readIntegerEnv("SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", 3);
-const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 1000);
-const maxFrames = readIntegerEnv("SMARTST_NATIVE_VIDEO_PAYLOAD_CONSUME_MAX_FRAMES", 2);
+const videoMediaTypeIndex = readIntegerEnv("UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
+const videoThreadLimit = readIntegerEnv("UST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
+const videoFrameQueueCapacity = readIntegerEnv("UST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", 3);
+const holdMs = readIntegerEnv("UST_NATIVE_SESSION_HOLD_MS", 1000);
+const maxFrames = readIntegerEnv("UST_NATIVE_VIDEO_PAYLOAD_CONSUME_MAX_FRAMES", 2);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,

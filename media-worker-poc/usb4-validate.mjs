@@ -3,9 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const durationSeconds = Number.parseInt(process.env.SMARTST_USB4_DURATION_SECONDS || "10", 10);
-const requestedFrameRate = Number.parseInt(process.env.SMARTST_USB4_FRAME_RATE || "30", 10);
-const minAcceptableFps = Number.parseInt(process.env.SMARTST_USB4_MIN_ACCEPTABLE_FPS || "24", 10);
+const durationSeconds = Number.parseInt(process.env.UST_USB4_DURATION_SECONDS || "10", 10);
+const requestedFrameRate = Number.parseInt(process.env.UST_USB4_FRAME_RATE || "30", 10);
+const minAcceptableFps = Number.parseInt(process.env.UST_USB4_MIN_ACCEPTABLE_FPS || "24", 10);
 const probe = JSON.parse((await runNode(resolve(rootDir, "media-worker-poc/device-probe.mjs"))).stdout);
 const videoDevices = probe.devices.video;
 const requiredVideoChannels = 4;

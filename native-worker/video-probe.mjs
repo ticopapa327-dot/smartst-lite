@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const videoIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_INDEX", 0);
-const mediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
-const maxMediaTypes = readIntegerEnv("SMARTST_NATIVE_VIDEO_MAX_TYPES", 128);
-const maxAttempts = readIntegerEnv("SMARTST_NATIVE_VIDEO_MAX_ATTEMPTS", 60);
+const videoIndex = readIntegerEnv("UST_NATIVE_VIDEO_INDEX", 0);
+const mediaTypeIndex = readIntegerEnv("UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
+const maxMediaTypes = readIntegerEnv("UST_NATIVE_VIDEO_MAX_TYPES", 128);
+const maxAttempts = readIntegerEnv("UST_NATIVE_VIDEO_MAX_ATTEMPTS", 60);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,

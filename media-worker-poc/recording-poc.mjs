@@ -6,8 +6,8 @@ import { dirname, resolve, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outputRoot = process.env.SMARTST_RECORDING_POC_DIR
-  ? resolve(process.env.SMARTST_RECORDING_POC_DIR)
+const outputRoot = process.env.UST_RECORDING_POC_DIR
+  ? resolve(process.env.UST_RECORDING_POC_DIR)
   : resolve(rootDir, "runtime/recordings-poc");
 const recordingId = `rec-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`;
 const recordingDir = join(outputRoot, recordingId);
@@ -17,7 +17,7 @@ const events = [];
 await mkdir(recordingDir, { recursive: true });
 
 const manifest = {
-  schemaVersion: "smartst.recording-manifest.v0.1",
+  schemaVersion: "ust.recording-manifest.v0.1",
   recordingId,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),

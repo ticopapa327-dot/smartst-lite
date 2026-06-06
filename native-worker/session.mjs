@@ -5,16 +5,16 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera,endoscope")
+const channels = (process.env.UST_NATIVE_SESSION_CHANNELS || "field-camera,endoscope")
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean);
-const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
-const videoThreadLimit = readIntegerEnv("SMARTST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
-const videoFrameQueueCapacity = readIntegerEnv("SMARTST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", undefined);
-const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
-const audioPayloadQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", undefined);
-const holdMs = readIntegerEnv("SMARTST_NATIVE_SESSION_HOLD_MS", 500);
+const videoMediaTypeIndex = readIntegerEnv("UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
+const videoThreadLimit = readIntegerEnv("UST_NATIVE_VIDEO_THREAD_LIMIT", undefined);
+const videoFrameQueueCapacity = readIntegerEnv("UST_NATIVE_VIDEO_FRAME_QUEUE_CAPACITY", undefined);
+const audioIndex = readIntegerEnv("UST_NATIVE_AUDIO_INDEX", 0);
+const audioPayloadQueueCapacity = readIntegerEnv("UST_NATIVE_AUDIO_PAYLOAD_QUEUE_CAPACITY", undefined);
+const holdMs = readIntegerEnv("UST_NATIVE_SESSION_HOLD_MS", 500);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,

@@ -1,4 +1,4 @@
-# SmartST Lite Web Observer PoC
+# 视捷UST Web Observer PoC
 
 This is the phone H5 proof-of-concept for one-way surgery teaching observation.
 

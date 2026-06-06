@@ -1,4 +1,4 @@
-# SmartST Lite 文档入口
+# 视捷UST 文档入口
 
 本文档目录记录当前 USB-first 手术示教软件主线。根目录 `README.md` 已改为当前代码入口，不再保留旧版 ONVIF/RTSP 主流程说明。
 
@@ -7,7 +7,7 @@
 1. `development-readiness.md`
    当前基线、架构决策、模块划分和阶段计划。
 2. `deployment-package-split.md`
-   SmartST Server、SmartST OR Agent、SmartST Desktop Client 三包部署和服务化边界。
+   UST Server、UST OR Agent、UST Desktop Client 三包部署和服务化边界。
 3. `livekit-desktop-surgery-teaching-architecture.md`
    产品功能架构、默认画面、权限、手机 H5、Android 平板、录像、HIS 和 AI 预留。
 4. `livekit-native-media-worker-service-feasibility.md`

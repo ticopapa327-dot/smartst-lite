@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const audioRenderIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_RENDER_INDEX", 0);
+const audioRenderIndex = readIntegerEnv("UST_NATIVE_AUDIO_RENDER_INDEX", 0);
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
   cwd: rootDir,

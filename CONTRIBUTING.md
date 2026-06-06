@@ -1,6 +1,6 @@
-# Contributing to SmartST Lite
+# Contributing to 视捷UST
 
-感谢你考虑参与 SmartST Lite。项目定位是免费、轻量、可信赖的 Windows 手术示教/转播客户端，第一阶段优先保证清晰架构和最小可运行体验。
+感谢你考虑参与 视捷UST。项目定位是免费、轻量、可信赖的 Windows 手术示教/转播客户端，第一阶段优先保证清晰架构和最小可运行体验。
 
 ## 开发原则
 

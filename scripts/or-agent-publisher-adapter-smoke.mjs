@@ -98,7 +98,7 @@ try {
     departureTimeout: 30,
     maxParticipants: 16,
     metadata: JSON.stringify({
-      purpose: "smartst-or-agent-publisher-adapter-smoke",
+      purpose: "ust-or-agent-publisher-adapter-smoke",
       roomCode: accepted.room.roomCode,
       defaultChannelId: accepted.room.mediaPolicy.defaultChannelId,
       createdAt: startedAt.toISOString(),
@@ -209,7 +209,7 @@ try {
 
   const result = {
     status: "passed",
-    schemaVersion: "smartst.or-agent-publisher-adapter-smoke.v0.1",
+    schemaVersion: "ust.or-agent-publisher-adapter-smoke.v0.1",
     livekitUrl: config.livekitUrl,
     businessUrl: config.businessUrl,
     callId: call.call.id,
@@ -276,7 +276,7 @@ try {
   await dispose().catch(() => undefined);
   printJson({
     status: "failed",
-    schemaVersion: "smartst.or-agent-publisher-adapter-smoke.v0.1",
+    schemaVersion: "ust.or-agent-publisher-adapter-smoke.v0.1",
     livekitUrl: config.livekitUrl,
     businessUrl: config.businessUrl,
     error: error instanceof Error ? error.name : "Error",
@@ -511,28 +511,28 @@ async function readConfig() {
   const localKeys = await readLocalKeys();
   return {
     businessUrl: normalizeBaseUrl(
-      process.env.SMARTST_LAB_BUSINESS_URL ||
-        process.env.SMARTST_BUSINESS_URL ||
+      process.env.UST_LAB_BUSINESS_URL ||
+        process.env.UST_BUSINESS_URL ||
         processState.businessUrl ||
         "http://127.0.0.1:4780",
     ),
     livekitUrl: process.env.LIVEKIT_URL?.trim() || processState.livekitUrl || "ws://127.0.0.1:7880",
     apiKey: process.env.LIVEKIT_API_KEY?.trim() || localKeys.apiKey,
     apiSecret: process.env.LIVEKIT_API_SECRET?.trim() || localKeys.apiSecret,
-    timeoutMs: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_TIMEOUT_MS || "20000", 10),
-    initialNativeHoldMs: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_NATIVE_HOLD_MS || "1200", 10),
-    publishDurationMs: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_DURATION_MS || "3000", 10),
-    videoFrameRate: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_FPS || "4", 10),
-    expectedVideoWidth: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_EXPECTED_WIDTH || "0", 10),
-    videoMediaTypeIndex: Number.parseInt(process.env.SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX || "0", 10),
-    videoFrameQueueCapacity: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_VIDEO_QUEUE || "8", 10),
-    audioIndex: Number.parseInt(process.env.SMARTST_NATIVE_AUDIO_INDEX || "0", 10),
-    audioPayloadQueueCapacity: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_AUDIO_QUEUE || "100", 10),
-    audioPacketsPerExport: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_AUDIO_PACKETS || "10", 10),
-    audioExportIntervalMs: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_AUDIO_INTERVAL_MS || "200", 10),
-    observerCount: Number.parseInt(process.env.SMARTST_OR_PUBLISHER_OBSERVERS || "1", 10),
+    timeoutMs: Number.parseInt(process.env.UST_OR_PUBLISHER_TIMEOUT_MS || "20000", 10),
+    initialNativeHoldMs: Number.parseInt(process.env.UST_OR_PUBLISHER_NATIVE_HOLD_MS || "1200", 10),
+    publishDurationMs: Number.parseInt(process.env.UST_OR_PUBLISHER_DURATION_MS || "3000", 10),
+    videoFrameRate: Number.parseInt(process.env.UST_OR_PUBLISHER_FPS || "4", 10),
+    expectedVideoWidth: Number.parseInt(process.env.UST_OR_PUBLISHER_EXPECTED_WIDTH || "0", 10),
+    videoMediaTypeIndex: Number.parseInt(process.env.UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX || "0", 10),
+    videoFrameQueueCapacity: Number.parseInt(process.env.UST_OR_PUBLISHER_VIDEO_QUEUE || "8", 10),
+    audioIndex: Number.parseInt(process.env.UST_NATIVE_AUDIO_INDEX || "0", 10),
+    audioPayloadQueueCapacity: Number.parseInt(process.env.UST_OR_PUBLISHER_AUDIO_QUEUE || "100", 10),
+    audioPacketsPerExport: Number.parseInt(process.env.UST_OR_PUBLISHER_AUDIO_PACKETS || "10", 10),
+    audioExportIntervalMs: Number.parseInt(process.env.UST_OR_PUBLISHER_AUDIO_INTERVAL_MS || "200", 10),
+    observerCount: Number.parseInt(process.env.UST_OR_PUBLISHER_OBSERVERS || "1", 10),
     nativeWorker: {
-      executablePath: process.env.SMARTST_OR_AGENT_NATIVE_WORKER_EXE,
+      executablePath: process.env.UST_OR_AGENT_NATIVE_WORKER_EXE,
     },
   };
 }
@@ -702,7 +702,7 @@ async function resolveNativeWorkerLaunch(options) {
       args: [],
     };
   }
-  const releaseExe = join(repoRoot, "native-worker", "target", "release", "smartst-native-worker.exe");
+  const releaseExe = join(repoRoot, "native-worker", "target", "release", "ust-native-worker.exe");
   if (await fileExists(releaseExe)) {
     return {
       mode: "release-exe",

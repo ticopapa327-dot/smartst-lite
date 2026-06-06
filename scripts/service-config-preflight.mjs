@@ -3,9 +3,9 @@ import { resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const configFiles = [
-  "deploy/config/smartst-server.example.json",
-  "deploy/config/smartst-or-agent.example.json",
-  "deploy/config/smartst-desktop-client.example.json",
+  "deploy/config/ust-server.example.json",
+  "deploy/config/ust-or-agent.example.json",
+  "deploy/config/ust-desktop-client.example.json",
 ];
 
 const forbiddenClientKeys = [
@@ -25,11 +25,11 @@ try {
     configs[file] = await readConfig(file);
   }
 
-  const serverConfig = configs["deploy/config/smartst-server.example.json"];
-  const orAgentConfig = configs["deploy/config/smartst-or-agent.example.json"];
-  const desktopConfig = configs["deploy/config/smartst-desktop-client.example.json"];
+  const serverConfig = configs["deploy/config/ust-server.example.json"];
+  const orAgentConfig = configs["deploy/config/ust-or-agent.example.json"];
+  const desktopConfig = configs["deploy/config/ust-desktop-client.example.json"];
 
-  assert(serverConfig.role === "SmartST Server", "server role mismatch");
+  assert(serverConfig.role === "UST Server", "server role mismatch");
   assert(serverConfig.livekit.apiSecretEnv === "LIVEKIT_API_SECRET", "server must reference secret by env name");
   assert(!JSON.stringify(serverConfig).includes("dev-api-secret"), "server config contains a dev secret");
   assert(serverConfig.listen.businessPort === 4780, "server business port must default to 4780");
@@ -38,19 +38,19 @@ try {
   assert(serverConfig.observerPolicy.allowPublishVideo === false, "phone observers must not publish video");
   assert(serverConfig.observerPolicy.allowPublishData === false, "phone observers must not publish data");
 
-  assert(orAgentConfig.role === "SmartST OR Agent", "OR Agent role mismatch");
+  assert(orAgentConfig.role === "UST OR Agent", "OR Agent role mismatch");
   assert(orAgentConfig.controlApi.port === 4781, "OR Agent control port must default to 4781");
   assert(orAgentConfig.nativeWorker.videoPayloadQueueCapacity > 0, "video payload queue capacity missing");
   assert(orAgentConfig.channels.some((channel) => channel.id === "field-camera" && channel.remoteDefault), "field-camera must be remote default");
   assertNoForbiddenSecrets(orAgentConfig, forbiddenClientKeys, "OR Agent config");
 
-  assert(desktopConfig.role === "SmartST Desktop Client", "Desktop Client role mismatch");
+  assert(desktopConfig.role === "UST Desktop Client", "Desktop Client role mismatch");
   assert(desktopConfig.livekit.storeApiSecret === false, "Desktop Client must not store API secret");
   assertNoForbiddenSecrets(desktopConfig, forbiddenClientKeys, "Desktop Client config");
 
   console.log(JSON.stringify({
     status: "passed",
-    schemaVersion: "smartst.service-config-preflight.v0.1",
+    schemaVersion: "ust.service-config-preflight.v0.1",
     configs: Object.fromEntries(
       Object.entries(configs).map(([file, config]) => [
         file,
@@ -78,7 +78,7 @@ try {
 } catch (error) {
   console.log(JSON.stringify({
     status: "failed",
-    schemaVersion: "smartst.service-config-preflight.v0.1",
+    schemaVersion: "ust.service-config-preflight.v0.1",
     error: error instanceof Error ? error.name : "Error",
     message: error instanceof Error ? error.message : String(error),
   }, null, 2));

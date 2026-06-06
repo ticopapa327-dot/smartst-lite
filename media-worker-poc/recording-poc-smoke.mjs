@@ -7,7 +7,7 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const result = JSON.parse((await runNode(resolve(rootDir, "media-worker-poc/recording-poc.mjs"))).stdout);
 const manifest = JSON.parse(await readFile(result.manifestPath, "utf8"));
 
-assert(manifest.schemaVersion === "smartst.recording-manifest.v0.1", "schema version is stable");
+assert(manifest.schemaVersion === "ust.recording-manifest.v0.1", "schema version is stable");
 assert(manifest.patientBinding.status === "unbound", "patient binding is absent in PoC");
 assert(manifest.source.finalNativeApi.mediaFoundation === false, "Media Foundation is not claimed");
 assert(manifest.source.finalNativeApi.wasapi === false, "WASAPI is not claimed");

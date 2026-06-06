@@ -36,7 +36,7 @@ export default function App() {
         },
       });
       setIsReady(true);
-      await writeLog("info", "SmartST Lite started", undefined, {
+      await writeLog("info", "视捷UST started", undefined, {
         ...storedConfig.settings,
         logDirectory: storedConfig.settings.logDirectory || paths.logDirectory,
       });

@@ -1,6 +1,6 @@
-# SmartST Lite Business Service PoC
+# 视捷UST Business Service PoC
 
-This is a no-dependency Node.js proof-of-concept service for SmartST Lite call signaling and token policy validation.
+This is a no-dependency Node.js proof-of-concept service for 视捷UST call signaling and token policy validation.
 
 It is not a production service.
 
@@ -30,8 +30,8 @@ http://127.0.0.1:4780
 LAN test mode for a surgical-room all-in-one machine:
 
 ```powershell
-$env:SMARTST_POC_HOST="0.0.0.0"
-$env:SMARTST_POC_PORT="4780"
+$env:UST_POC_HOST="0.0.0.0"
+$env:UST_POC_PORT="4780"
 $env:LIVEKIT_TOKEN_MODE="real"
 $env:LIVEKIT_URL="ws://<OR-PC-LAN-IP>:7880"
 $env:LIVEKIT_API_KEY="<server-side-key>"
@@ -74,7 +74,7 @@ $env:LIVEKIT_API_SECRET="..."
 npm run server:poc:livekit-preflight
 ```
 
-The preflight uses the server SDK RoomService API to create and list a unique test room, then asks the business service to issue real OR host and phone observer JWTs for that room. By default it deletes the test room before exiting. Set `SMARTST_LIVEKIT_PREFLIGHT_KEEP_ROOM=1` only when you intentionally want to keep the room for manual debugging.
+The preflight uses the server SDK RoomService API to create and list a unique test room, then asks the business service to issue real OR host and phone observer JWTs for that room. By default it deletes the test room before exiting. Set `UST_LIVEKIT_PREFLIGHT_KEEP_ROOM=1` only when you intentionally want to keep the room for manual debugging.
 
 The API secret must never be used in the desktop client, phone H5, Android tablet client, logs, or exported config.
 

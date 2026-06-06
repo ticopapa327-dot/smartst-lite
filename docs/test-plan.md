@@ -1,6 +1,6 @@
-# SmartST Lite 测试方案与计划
+# 视捷UST 测试方案与计划
 
-> 适用仓库：`D:\我的工作\AOV\SmartST Lite`  
+> 适用仓库：`<repo-root>`
 > 当前阶段：AD-00 到 AD-09 PoC 基线。  
 > 原则：先证明底层媒体链路，再承诺业务功能；先自动化回归，再现场硬件验收。
 
@@ -51,13 +51,13 @@ npm run tauri:install-smoke
 
 通过标准：
 
-- `src-tauri\target\release\smartst-lite.exe` 生成。
-- `native-worker\target\release\smartst-native-worker.exe` 生成。
-- `src-tauri\target\release\bin\smartst-native-worker.exe` 生成。
-- `media-worker:native:release-smoke` 可直接启动 `src-tauri\target\release\bin\smartst-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`。
-- `src-tauri\target\release\bundle\nsis\SmartST Lite_0.1.4_x64-setup.exe` 生成。
-- `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\smartst-native-worker.exe"` 和卸载删除项。
-- `tauri:install-smoke` 只允许安装到 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录；必须验证安装文件、HKCU 卸载项、桌面/开始菜单快捷方式、安装目录 Worker 控制面、安装版主程序内部 smoke，以及静默卸载后无目录/注册表/快捷方式残留。安装版主程序内部 smoke 必须通过 `SMARTST_DESKTOP_SMOKE=1` 启动 installed exe，并要求 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1` 下 packaged Worker ready、`start`、视频 drain、音频 drain 和 `stop` 全部通过。
+- `src-tauri\target\release\ust-desktop-client.exe` 生成。
+- `native-worker\target\release\ust-native-worker.exe` 生成。
+- `src-tauri\target\release\bin\ust-native-worker.exe` 生成。
+- `media-worker:native:release-smoke` 可直接启动 `src-tauri\target\release\bin\ust-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`。
+- `src-tauri\target\release\bundle\nsis\UST Desktop Client_0.1.4_x64-setup.exe` 生成。
+- `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\ust-native-worker.exe"` 和卸载删除项。
+- `tauri:install-smoke` 只允许安装到 `USTDesktopClientNsisSmoke-*` 或 `USTDesktopClientNsisTest-*` 测试目录；必须验证安装文件、HKCU 卸载项、桌面/开始菜单快捷方式、安装目录 Worker 控制面、安装版主程序内部 smoke，以及静默卸载后无目录/注册表/快捷方式残留。安装版主程序内部 smoke 必须通过 `UST_DESKTOP_SMOKE=1` 启动 installed exe，并要求 `UST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`UST_DESKTOP_SMOKE_REQUIRE_AV=1` 下 packaged Worker ready、`start`、视频 drain、音频 drain 和 `stop` 全部通过。
 
 ### L0.6 三包部署边界验证
 
@@ -73,7 +73,7 @@ npm run service:config-preflight
 
 通过标准：
 
-- 安装角色必须能表达 `SmartST Server`、`SmartST OR Agent`、`SmartST Desktop Client`。
+- 安装角色必须能表达 `UST Server`、`UST OR Agent`、`UST Desktop Client`。
 - Server 可同装手术室电脑，也可独立安装；Desktop Client 只配置 Server URL 和 OR Agent URL。
 - `LIVEKIT_API_SECRET` 只允许存在于 Server 配置或服务环境中。
 - Desktop Client 关闭不应作为 Server、LiveKit、OR Agent 或录像停止条件。
@@ -118,7 +118,7 @@ npm run media-worker:device-probe
 
 ### L3 LiveKit 与业务服务
 
-目标：验证 SmartST Server、真实 JWT、真实房间互动。
+目标：验证 UST Server、真实 JWT、真实房间互动。
 
 命令：
 
@@ -133,8 +133,8 @@ npm run server:poc:livekit-preflight
 
 前置条件：
 
-- SmartST Server 可访问；一体机部署时可通过手术室电脑固定 IP 访问。
-- SmartST Server 能签发短期 JWT。
+- UST Server 可访问；一体机部署时可通过手术室电脑固定 IP 访问。
+- UST Server 能签发短期 JWT。
 - 客户端没有 LiveKit API secret。
 - TURN/TLS 策略明确。
 

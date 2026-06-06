@@ -6,22 +6,22 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(rootDir, "native-worker/Cargo.toml");
 
-const channels = (process.env.SMARTST_NATIVE_SESSION_CHANNELS || "field-camera")
+const channels = (process.env.UST_NATIVE_SESSION_CHANNELS || "field-camera")
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean);
-const videoMediaTypeIndex = readIntegerEnv("SMARTST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
-const videoFrameQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_VIDEO_QUEUE_CAPACITY", 5);
-const audioIndex = readIntegerEnv("SMARTST_NATIVE_AUDIO_INDEX", 0);
-const audioPayloadQueueCapacity = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_AUDIO_QUEUE_CAPACITY", 100);
-const durationMs = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_DURATION_MS", 5000);
-const sampleIntervalMs = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_SAMPLE_INTERVAL_MS", 500);
-const drainIntervalMs = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_DRAIN_INTERVAL_MS", 500);
-const maxVideoFrames = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_MAX_VIDEO_FRAMES", 2);
-const maxAudioPackets = readIntegerEnv("SMARTST_NATIVE_AV_SOAK_MAX_AUDIO_PACKETS", 50);
+const videoMediaTypeIndex = readIntegerEnv("UST_NATIVE_VIDEO_MEDIA_TYPE_INDEX", 0);
+const videoFrameQueueCapacity = readIntegerEnv("UST_NATIVE_AV_SOAK_VIDEO_QUEUE_CAPACITY", 5);
+const audioIndex = readIntegerEnv("UST_NATIVE_AUDIO_INDEX", 0);
+const audioPayloadQueueCapacity = readIntegerEnv("UST_NATIVE_AV_SOAK_AUDIO_QUEUE_CAPACITY", 100);
+const durationMs = readIntegerEnv("UST_NATIVE_AV_SOAK_DURATION_MS", 5000);
+const sampleIntervalMs = readIntegerEnv("UST_NATIVE_AV_SOAK_SAMPLE_INTERVAL_MS", 500);
+const drainIntervalMs = readIntegerEnv("UST_NATIVE_AV_SOAK_DRAIN_INTERVAL_MS", 500);
+const maxVideoFrames = readIntegerEnv("UST_NATIVE_AV_SOAK_MAX_VIDEO_FRAMES", 2);
+const maxAudioPackets = readIntegerEnv("UST_NATIVE_AV_SOAK_MAX_AUDIO_PACKETS", 50);
 const outputPath = resolve(
   rootDir,
-  process.env.SMARTST_NATIVE_AV_SOAK_OUTPUT || "native-worker/.tmp/av-soak-smoke.json",
+  process.env.UST_NATIVE_AV_SOAK_OUTPUT || "native-worker/.tmp/av-soak-smoke.json",
 );
 
 const child = spawn("cargo", ["run", "--quiet", "--manifest-path", manifestPath], {
@@ -201,7 +201,7 @@ function summarizeSoak(profile) {
   const boundAudioEndpoints = profile.started.captureSession?.boundAudioEndpoints ?? 0;
   if (boundVideoChannels === 0 || boundAudioEndpoints === 0) {
     return {
-      schemaVersion: "smartst.native-av-soak.v0.1",
+      schemaVersion: "ust.native-av-soak.v0.1",
       status: "skipped",
       reason: "missing-bound-media-endpoint",
       mode: profile.started.captureSession?.mode,
@@ -221,7 +221,7 @@ function summarizeSoak(profile) {
   assert(profile.drainEvents.length >= 3, "AV soak performs at least 3 drain cycles");
 
   return {
-    schemaVersion: "smartst.native-av-soak.v0.1",
+    schemaVersion: "ust.native-av-soak.v0.1",
     status: "passed",
     mode: profile.started.captureSession?.mode,
     durationMs: profile.durationMs,
