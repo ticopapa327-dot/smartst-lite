@@ -884,6 +884,32 @@ npm run test:all:poc
 - 该验证证明 Tauri release 和 NSIS 安装包包含 Native Worker 资源。
 - 本轮没有执行安装器静默安装后的端到端启动验证，避免安装器写入系统注册表、开始菜单和卸载项；正式交付前仍需在干净 Windows 测试机上安装并执行 `Native Worker ready -> Probe devices -> Start session -> Drain AV -> Stop`。
 
+### 7.1.1 NSIS 本机静默安装验证
+
+执行时间：2026-06-06。
+
+命令策略：
+
+- 使用 `SmartST Lite_0.1.4_x64-setup.exe /S /D=<测试目录>`。
+- 安装模式来自 NSIS 脚本：`INSTALLMODE=currentUser`，不需要管理员权限。
+- 测试目录：`C:\Users\wangm\AppData\Local\SmartSTLiteNsisTest-20260606145018`。
+
+验证结果：
+
+- 安装器退出码为 `0`。
+- `smartst-lite.exe` 已安装，大小 `9332736` bytes。
+- `bin\smartst-native-worker.exe` 已安装，大小 `989184` bytes。
+- `uninstall.exe` 已安装。
+- HKCU 卸载注册项存在：`DisplayName=SmartST Lite`、`DisplayVersion=0.1.4`、`InstallLocation=<测试目录>`。
+- 桌面和开始菜单快捷方式已创建。
+- 直接启动安装目录下的 `bin\smartst-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`，返回 `source=windows-native`、`videoCount=1`、`audioCount=1`、`audioRenderCount=1`，Media Foundation/WASAPI/WASAPI render 状态均为 `ok`。
+- 启动安装目录下的 `smartst-lite.exe`，5 秒后进程仍存活；随后发送窗口关闭请求，进程退出码为 `0`，未强制结束。
+
+边界：
+
+- 该项证明本机 NSIS 静默安装、安装目录 Worker 控制面和主程序启动链路可用。
+- 该项不是干净 Windows 测试机验收，未执行人工 UI 操作、LiveKit 房间连接、Native Worker 工作台按钮点击、录像或卸载后残留检查。
+
 现场验证命令：
 
 ```powershell
