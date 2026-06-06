@@ -39,9 +39,11 @@ try {
   assert(["windows-native", "mock-fallback", "mock-native"].includes(devices.source), "device source is explicit");
   assert(Array.isArray(devices.video), "video devices are listed as an array");
   assert(Array.isArray(devices.audio), "audio devices are listed as an array");
+  assert(Array.isArray(devices.audioRender), "audio render devices are listed as an array");
   assert(devices.diagnostics?.workerDeviceMode, "device diagnostics include worker mode");
   assert(devices.diagnostics?.mediaFoundation?.status, "Media Foundation status is reported");
   assert(devices.diagnostics?.wasapi?.status, "WASAPI status is reported");
+  assert(devices.diagnostics?.wasapiRender?.status, "WASAPI render status is reported");
   if (devices.video.length > 0) {
     assert(devices.video[0].backend, "video device backend is explicit");
     assert(devices.video[0].nativeId, "video device native id is present");
@@ -50,6 +52,12 @@ try {
   if (devices.audio.length > 0) {
     assert(devices.audio[0].backend, "audio device backend is explicit");
     assert(devices.audio[0].nativeId, "audio device native id is present");
+    assert(devices.audio[0].dataFlow === "capture", "audio capture data flow is explicit");
+  }
+  if (devices.audioRender.length > 0) {
+    assert(devices.audioRender[0].backend, "audio render backend is explicit");
+    assert(devices.audioRender[0].nativeId, "audio render native id is present");
+    assert(devices.audioRender[0].dataFlow === "render", "audio render data flow is explicit");
   }
 
   const started = await request("start", {

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows::core::{BSTR, GUID, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
-    eCapture, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
+    eCapture, eRender, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
     MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, AUDCLNT_BUFFERFLAGS_SILENT,
     AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR, AUDCLNT_SHAREMODE_SHARED, DEVICE_STATE_ACTIVE,
     WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
@@ -1028,10 +1028,15 @@ fn build_capture_session_start(
         "source": "windows-native",
         "video": video_devices,
         "audio": audio_devices,
+        "audioRender": [],
         "diagnostics": {
             "workerDeviceMode": "windows-native",
             "mediaFoundation": media_foundation_diag,
-            "wasapi": wasapi_diag
+            "wasapi": wasapi_diag,
+            "wasapiRender": {
+                "status": "not-run",
+                "reason": "capture-session-start-does-not-open-render-endpoints"
+            }
         }
     });
     let capture_session = json!({
@@ -3518,10 +3523,24 @@ fn mock_devices() -> Value {
                 "capabilities": [{ "sampleRate": 48000, "channels": 2 }]
             }
         ],
+        "audioRender": [
+            {
+                "deviceId": "mock-native-audio-render-room",
+                "displayName": "Mock Native Room Playback Device",
+                "transport": "system-audio-output",
+                "role": "room-speaker",
+                "backend": "mock-native",
+                "nativeId": "mock-native-audio-render-room",
+                "dataFlow": "render",
+                "state": "active",
+                "capabilities": [{ "sampleRate": 48000, "channels": 2 }]
+            }
+        ],
         "diagnostics": {
             "workerDeviceMode": "mock-native",
             "mediaFoundation": { "status": "mock", "count": 4 },
-            "wasapi": { "status": "mock", "count": 1 }
+            "wasapi": { "status": "mock", "count": 1 },
+            "wasapiRender": { "status": "mock", "count": 1 }
         }
     })
 }
@@ -3537,7 +3556,8 @@ fn enumerate_native_devices() -> Value {
                 "reason": "com-initialization-failed",
                 "com": { "status": "failed", "error": error },
                 "mediaFoundation": { "status": "not-run" },
-                "wasapi": { "status": "not-run" }
+                "wasapi": { "status": "not-run" },
+                "wasapiRender": { "status": "not-run" }
             });
             return devices;
         }
@@ -3545,6 +3565,7 @@ fn enumerate_native_devices() -> Value {
 
     let video_result = enumerate_video_devices();
     let audio_result = enumerate_audio_capture_devices();
+    let audio_render_result = enumerate_audio_render_devices();
     drop(com);
 
     let (video, media_foundation_diag) = match video_result {
@@ -3593,16 +3614,43 @@ fn enumerate_native_devices() -> Value {
         ),
     };
 
+    let (audio_render, wasapi_render_diag) = match audio_render_result {
+        Ok(audio_render) => {
+            let count = audio_render.len();
+            (
+                audio_render,
+                json!({
+                    "status": "ok",
+                    "count": count,
+                    "backend": "wasapi",
+                    "dataFlow": "render",
+                    "capabilitiesStatus": "not-enumerated"
+                }),
+            )
+        }
+        Err(error) => (
+            Vec::new(),
+            json!({
+                "status": "failed",
+                "backend": "wasapi",
+                "dataFlow": "render",
+                "error": error
+            }),
+        ),
+    };
+
     let media_foundation_failed = media_foundation_diag["status"] == "failed";
     let wasapi_failed = wasapi_diag["status"] == "failed";
-    if media_foundation_failed && wasapi_failed {
+    let wasapi_render_failed = wasapi_render_diag["status"] == "failed";
+    if media_foundation_failed && wasapi_failed && wasapi_render_failed {
         let mut devices = mock_devices();
         devices["source"] = json!("mock-fallback");
         devices["diagnostics"] = json!({
             "workerDeviceMode": "mock-fallback",
             "reason": "native-enumeration-failed",
             "mediaFoundation": media_foundation_diag,
-            "wasapi": wasapi_diag
+            "wasapi": wasapi_diag,
+            "wasapiRender": wasapi_render_diag
         });
         return devices;
     }
@@ -3611,10 +3659,12 @@ fn enumerate_native_devices() -> Value {
         "source": "windows-native",
         "video": video,
         "audio": audio,
+        "audioRender": audio_render,
         "diagnostics": {
             "workerDeviceMode": "windows-native",
             "mediaFoundation": media_foundation_diag,
-            "wasapi": wasapi_diag
+            "wasapi": wasapi_diag,
+            "wasapiRender": wasapi_render_diag
         }
     })
 }
@@ -4502,6 +4552,15 @@ fn enumerate_audio_capture_devices() -> Result<Vec<Value>, String> {
     })
 }
 
+fn enumerate_audio_render_devices() -> Result<Vec<Value>, String> {
+    with_audio_render_devices(|records| {
+        Ok(records
+            .iter()
+            .map(audio_render_device_record_to_json)
+            .collect::<Vec<_>>())
+    })
+}
+
 fn with_audio_capture_devices<T>(
     callback: impl FnOnce(Vec<AudioDeviceRecord>) -> Result<T, String>,
 ) -> Result<T, String> {
@@ -4547,6 +4606,51 @@ fn with_audio_capture_devices<T>(
     callback(devices)
 }
 
+fn with_audio_render_devices<T>(
+    callback: impl FnOnce(Vec<AudioDeviceRecord>) -> Result<T, String>,
+) -> Result<T, String> {
+    let enumerator: IMMDeviceEnumerator = unsafe {
+        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(format_windows_error)?
+    };
+    let collection = unsafe {
+        enumerator
+            .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+            .map_err(format_windows_error)?
+    };
+    let count = unsafe { collection.GetCount().map_err(format_windows_error)? };
+    let mut devices = Vec::new();
+
+    for index in 0..count {
+        let device = unsafe { collection.Item(index).map_err(format_windows_error)? };
+        let id_ptr = unsafe { device.GetId().map_err(format_windows_error)? };
+        let native_id =
+            take_cotask_pwstr(id_ptr).unwrap_or_else(|| format!("wasapi-render-{index}"));
+        let display_name = unsafe {
+            device
+                .OpenPropertyStore(STGM_READ)
+                .ok()
+                .and_then(|store| store.GetValue(&PKEY_Device_FriendlyName).ok())
+                .and_then(|value| BSTR::try_from(&value).ok())
+                .map(|name| name.to_string())
+        }
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| native_id.clone());
+
+        let device_id = stable_device_id("wasapi-render", index, &native_id);
+        let transport = infer_transport(&native_id, &display_name);
+        devices.push(AudioDeviceRecord {
+            index,
+            device_id,
+            display_name,
+            native_id,
+            transport,
+            device,
+        });
+    }
+
+    callback(devices)
+}
+
 fn audio_device_record_to_json(record: &AudioDeviceRecord) -> Value {
     json!({
         "index": record.index,
@@ -4557,6 +4661,23 @@ fn audio_device_record_to_json(record: &AudioDeviceRecord) -> Value {
         "backend": "wasapi",
         "nativeId": record.native_id,
         "dataFlow": "capture",
+        "state": "active",
+        "capabilities": [],
+        "capabilitiesStatus": "not-enumerated",
+        "capabilityProbeRequired": true
+    })
+}
+
+fn audio_render_device_record_to_json(record: &AudioDeviceRecord) -> Value {
+    json!({
+        "index": record.index,
+        "deviceId": record.device_id,
+        "displayName": record.display_name,
+        "transport": record.transport,
+        "role": "room-speaker",
+        "backend": "wasapi",
+        "nativeId": record.native_id,
+        "dataFlow": "render",
         "state": "active",
         "capabilities": [],
         "capabilitiesStatus": "not-enumerated",

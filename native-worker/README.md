@@ -8,7 +8,8 @@ This is the first Rust Native Worker skeleton for SmartST Lite.
 - Commands: `listDevices`, `probeVideoCapabilities`, `captureVideoSample`, `measureVideoFrames`, `probeAudioFormat`, `captureAudioBuffer`, `start`, `stop`, `consumeVideoPayloadQueue`, `exportVideoPayloadQueuePgm`, `exportVideoPayloadQueuePpm`, `consumeAudioPayloadQueue`, `exportAudioPayloadQueueWav`, `status`, `shutdown`.
 - `listDevices` uses Windows native enumeration when available:
   - Video: Media Foundation device source enumeration.
-  - Audio capture: WASAPI/Core Audio endpoint enumeration.
+  - Audio capture: WASAPI/Core Audio capture endpoint enumeration.
+  - Audio playback: WASAPI/Core Audio render endpoint enumeration.
 - Mock fallback is still available when native enumeration fails.
 - Channel `start`/`stop`/`status` now exposes a native capture session skeleton with device binding metadata plus stoppable Media Foundation video and WASAPI audio statistics threads.
 - `captureVideoSample` verifies a single Media Foundation sample read only.
@@ -355,7 +356,7 @@ npm run media-worker:native:smoke
 
 The protocol shape mirrors `media-worker-poc/worker.mjs`, but this process is intended to become the production worker. High-volume media frames must stay in native pipelines; JSON Lines is only the control and status channel.
 
-`listDevices` still reports device capabilities as `capabilitiesStatus=not-enumerated`. Run `probeVideoCapabilities` or `media-worker:native:video-probe` for Media Foundation media types, and run `probeAudioFormat` or `media-worker:native:audio-probe` for WASAPI mix format.
+`listDevices` still reports device capabilities as `capabilitiesStatus=not-enumerated`. Run `probeVideoCapabilities` or `media-worker:native:video-probe` for Media Foundation media types, and run `probeAudioFormat` or `media-worker:native:audio-probe` for WASAPI capture mix format. WASAPI render endpoints are enumerated for routing visibility only; render mix-format probing and playback are not implemented.
 
 `captureVideoSample` proves the source reader can return one native sample. It does not decode, preview, publish, encode, or record that sample.
 
@@ -376,6 +377,8 @@ When `videoChannelBindings` is present, `start` can bind a requested channel to 
 Each video thread reports `frameQueue` statistics with `mode=native-payload-bounded` and `payloadTransport=native-only`. The worker copies each Media Foundation sample into a bounded native memory queue and reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export frame payloads through JSON Lines. `consumeVideoPayloadQueue` drains queued native payload frames and returns only metadata and byte counters, so it can validate the future preview/publisher/recorder consumer boundary without returning frame bytes. Until a real consumer is attached, new payload frames overwrite the bounded queue after capacity is reached and increment `dropCount`.
 
 `exportVideoPayloadQueuePgm` drains queued NV12 frames and writes a native-side PGM grayscale image from the Y plane. `exportVideoPayloadQueuePpm` drains queued NV12 frames and writes a native-side PPM RGB image using CPU BT.601-style conversion. Both support only NV12 today and return only file metadata plus pixel statistics. These are frame payload/file-consumer validation paths, not preview rendering, color calibration, LiveKit publishing, encoding, or recording.
+
+`listDevices` returns capture endpoints in `audio` and playback/render endpoints in `audioRender`; render enumeration is for future room playback, echo reference, and AEC routing design only. The worker does not open render clients, play audio, capture loopback, or validate speaker quality yet.
 
 The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and PCM32 capture formats. It also copies each WASAPI packet into a bounded native memory queue with `payloadQueue.mode=pcm-packet-bounded`, `payloadQueue.transport=native-only`, and `payloadQueue.exportedOverJson=false`. The worker reports `payloadQueue.copyCount`, `payloadQueue.bytes`, `payloadQueue.droppedBytes`, and `payloadQueue.copyErrorCount`; it still does not export PCM payloads through JSON Lines. `consumeAudioPayloadQueue` drains queued native PCM packets and returns only metadata and byte counters, so it can validate the future resampler/AEC/publisher/recorder consumer boundary without returning PCM bytes. `exportAudioPayloadQueueWav` drains queued PCM packets and writes a native-side WAV file for PCM/IEEE_FLOAT mix formats; the JSON response returns only file metadata and byte counters. The level meter reports RMS/peak only; it does not resample, echo-cancel, denoise, publish, encode, or implement final recording policy. Unsupported capture formats are reported as `audioLevel.status=unsupported-format` instead of returning fabricated levels.
 

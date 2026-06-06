@@ -1,4 +1,4 @@
-import { Activity, Cpu, Mic, RefreshCw, Video } from "lucide-react";
+import { Activity, Cpu, Mic, RefreshCw, Video, Volume2 } from "lucide-react";
 import { useState } from "react";
 import {
   consumeNativeWorkerAudioPayloadQueue,
@@ -16,6 +16,7 @@ interface NativeWorkerDeviceSnapshot {
   source?: string;
   video?: unknown[];
   audio?: unknown[];
+  audioRender?: unknown[];
   diagnostics?: {
     workerDeviceMode?: string;
   };
@@ -34,6 +35,7 @@ export function NativeWorkerPanel() {
   const devices = (probe?.devices ?? null) as NativeWorkerDeviceSnapshot | null;
   const videoCount = Array.isArray(devices?.video) ? devices.video.length : 0;
   const audioCount = Array.isArray(devices?.audio) ? devices.audio.length : 0;
+  const audioRenderCount = Array.isArray(devices?.audioRender) ? devices.audioRender.length : 0;
   const source = devices?.source ?? probe?.status ?? "not-probed";
   const workerMode = devices?.diagnostics?.workerDeviceMode ?? probe?.readiness.status ?? "unknown";
   const sessionState = session?.captureSession?.state ?? session?.state ?? "idle";
@@ -198,6 +200,11 @@ export function NativeWorkerPanel() {
           <Mic size={18} />
           <strong>{audioCount} audio</strong>
           <span>WASAPI capture endpoints</span>
+        </div>
+        <div className="recording-stat">
+          <Volume2 size={18} />
+          <strong>{audioRenderCount} render</strong>
+          <span>WASAPI playback endpoints</span>
         </div>
         <div className="recording-stat">
           <Cpu size={18} />

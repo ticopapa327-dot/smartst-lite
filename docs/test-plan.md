@@ -61,6 +61,7 @@ npm run media-worker:device-probe
 | --- | --- |
 | 无设备启动 | 应用正常启动，提示明确 |
 | Native AV soak | `media-worker:native:av-soak` 至少 5 秒连续采集，视频/音频 copy counters 增长，周期 drain 成功，queue depth 有界，copy error 为 0 |
+| WASAPI render 枚举 | `media-worker:native:list-devices` 返回 `audioRender` 数组和 `diagnostics.wasapiRender.status`；该项只验证播放端点可见性，不等同回放、loopback 或 AEC 通过 |
 | 1 路 USB 采集卡 | 可预览、可短时录像、manifest 正确 |
 | 4 路 USB 采集卡 | 30 分钟不黑屏、不崩溃 |
 | 腹腔镜/内镜 HDMI 输入 | 分辨率、帧率、色彩和延迟可接受 |
