@@ -268,6 +268,22 @@ $env:SMARTST_NATIVE_INTERACTION_DRAIN_MAX_AUDIO_PACKETS="5"
 npm run media-worker:native:interaction-drain
 ```
 
+## Run Short Native AV Soak
+
+```powershell
+npm run media-worker:native:av-soak
+```
+
+Environment overrides:
+
+```powershell
+$env:SMARTST_NATIVE_AV_SOAK_DURATION_MS="30000"
+$env:SMARTST_NATIVE_AV_SOAK_SAMPLE_INTERVAL_MS="500"
+$env:SMARTST_NATIVE_AV_SOAK_DRAIN_INTERVAL_MS="500"
+$env:SMARTST_NATIVE_AV_SOAK_OUTPUT="native-worker/.tmp/av-soak-smoke.json"
+npm run media-worker:native:av-soak
+```
+
 ## Export Native Audio Payload Queue To WAV
 
 ```powershell
@@ -366,6 +382,8 @@ The WASAPI audio statistics thread reports `audioLevel` for float32, PCM16, and 
 `audio-call-drain` simulates a future audio call or publisher consumer by periodically draining native PCM packet batches and validating increasing sequence metadata, byte counters, `payloadTransport=native-only`, and `exportedOverJson=false`. It still does not perform resampling, AEC, denoising, LiveKit publishing, encoding, recording, or audio quality acceptance.
 
 `interaction-drain` starts video and audio in the same native session and periodically drains both queues. It validates the combined control path expected by an interactive teaching connection, but it still does not render preview textures, publish LiveKit tracks, perform AEC, encode, record, or prove end-to-end media sync.
+
+`av-soak` runs a configurable short continuous audio/video capture profile, samples status, periodically drains native video/audio payload queues, verifies copy counters increase, queue depths remain within configured capacity, payload copy errors stay at 0, and writes `smartst.native-av-soak.v0.1` JSON to `.tmp`. It is a sustained local capture/control smoke, not an endurance test, media quality acceptance, LiveKit publisher, AEC test, recording path, or multi-device certification.
 
 `export-artifact-manifest` is a Node-side verification script that reads the generated PGM, PPM, and WAV files, verifies their headers and dimensions, checks the artifact mtime is fresh by default, computes SHA-256 checksums, and writes `smartst.native-export-artifacts.v0.1` JSON. It is an export smoke artifact manifest only; it is not the formal surgical recording manifest, patient binding contract, playback index, or storage policy.
 

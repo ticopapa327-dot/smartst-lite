@@ -46,6 +46,7 @@
     "media-worker:native:audio-payload-consume": "node native-worker/audio-payload-consume.mjs",
     "media-worker:native:audio-call-drain": "node native-worker/audio-call-drain.mjs",
     "media-worker:native:interaction-drain": "node native-worker/interaction-drain.mjs",
+    "media-worker:native:av-soak": "node native-worker/av-soak.mjs",
     "media-worker:native:audio-wav-export": "node native-worker/audio-wav-export.mjs",
     "media-worker:native:export-artifact-manifest": "node native-worker/export-artifact-manifest.mjs",
     "media-worker:native:audio-profile": "node native-worker/audio-profile.mjs",
