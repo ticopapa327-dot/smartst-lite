@@ -68,7 +68,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build:exe": "npm run media-worker:native:build:release && tauri build --no-bundle",
-    "tauri:build": "npm run media-worker:native:build:release && tauri build"
+    "tauri:build": "npm run media-worker:native:build:release && tauri build",
+    "tauri:install-smoke": "node scripts/tauri-install-smoke.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

@@ -46,6 +46,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri:build:exe
 npm run media-worker:native:release-smoke
 npm run tauri:build
+npm run tauri:install-smoke
 ```
 
 通过标准：
@@ -56,6 +57,7 @@ npm run tauri:build
 - `media-worker:native:release-smoke` 可直接启动 `src-tauri\target\release\bin\smartst-native-worker.exe`，完成 `worker.ready -> listDevices -> shutdown`。
 - `src-tauri\target\release\bundle\nsis\SmartST Lite_0.1.4_x64-setup.exe` 生成。
 - `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\smartst-native-worker.exe"` 和卸载删除项。
+- `tauri:install-smoke` 只允许安装到 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录；必须验证安装文件、HKCU 卸载项、桌面/开始菜单快捷方式、安装目录 Worker 控制面、主程序 5 秒存活和静默卸载后无目录/注册表/快捷方式残留。
 
 ### L1 本机设备预检
 

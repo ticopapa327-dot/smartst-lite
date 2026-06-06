@@ -910,6 +910,49 @@ npm run test:all:poc
 - 该项证明本机 NSIS 静默安装、安装目录 Worker 控制面和主程序启动链路可用。
 - 该项不是干净 Windows 测试机验收，未执行人工 UI 操作、LiveKit 房间连接、Native Worker 工作台按钮点击、录像或卸载后残留检查。
 
+### 7.1.2 NSIS 安装/卸载自动化 smoke
+
+新增命令：
+
+```powershell
+npm run tauri:install-smoke
+```
+
+脚本范围：
+
+- 只允许使用 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录。
+- 如果发现现有 `SmartST Lite` 卸载注册项指向非测试目录，脚本会拒绝继续，避免误卸载正式安装。
+- 安装后验证 `smartst-lite.exe`、`bin\smartst-native-worker.exe`、`uninstall.exe`、HKCU 卸载项、桌面快捷方式、开始菜单快捷方式。
+- 直接启动安装目录 Worker 并执行 `worker.ready -> listDevices -> shutdown`。
+- 启动安装目录主程序，要求 5 秒后仍存活，并可通过窗口关闭请求正常退出。
+- 执行 `uninstall.exe /S` 后验证安装目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均不存在。
+
+本机结果：
+
+```text
+status=passed
+installDir=C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606151121
+installExitCode=0
+uninstallExitCode=0
+installedWorkerSmoke.source=windows-native
+installedWorkerSmoke.videoCount=1
+installedWorkerSmoke.audioCount=1
+installedWorkerSmoke.audioRenderCount=1
+mainProcess.aliveAfter5s=true
+mainProcess.exitCode=0
+mainProcess.forceKilled=false
+uninstallResiduals.installDirectoryExists=false
+uninstallResiduals.registryExists=false
+uninstallResiduals.desktopShortcutExists=false
+uninstallResiduals.startMenuShortcutExists=false
+followUpRegression=npm run test:all:poc passed in about 69.4s
+```
+
+边界：
+
+- 该脚本已覆盖本机 currentUser 静默安装、安装版 Worker 控制面、主程序启动和静默卸载残留检查。
+- 仍未覆盖干净 Windows 测试机、人工 UI 点击、LiveKit 房间连接、Native Worker 工作台按钮、录像链路或真实院内部署权限。
+
 现场验证命令：
 
 ```powershell

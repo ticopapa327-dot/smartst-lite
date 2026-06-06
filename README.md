@@ -154,6 +154,12 @@ npm run tauri:build
 npm run media-worker:native:release-smoke
 ```
 
+验证 NSIS 安装、启动、卸载和残留清理：
+
+```powershell
+npm run tauri:install-smoke
+```
+
 ## 发布与安全
 
 不得提交：
