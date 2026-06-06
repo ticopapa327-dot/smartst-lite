@@ -361,10 +361,11 @@
   - NSIS 安装/卸载自动化 smoke 完成：新增 `npm run tauri:install-smoke`，脚本只允许 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录，遇到非测试目录安装项会拒绝继续；本机执行通过，安装目录 `C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606151121`，安装/卸载退出码均为 0，安装版 Worker 返回 `source=windows-native`、`video=1/audio=1/render=1`，主程序 5 秒存活并正常关闭，静默卸载后安装目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均不存在；随后 `npm run test:all:poc` 完整回归通过，耗时约 69.4 秒。
   - 安装版桌面内部 smoke 阶段完成：`npm run tauri:install-smoke` 现会以 `SMARTST_DESKTOP_SMOKE=1` 启动已安装的 `smartst-lite.exe`，并强制 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1`；本机执行通过，安装目录 `C:\Users\wangm\AppData\Local\SmartSTLiteNsisSmoke-20260606154025`，安装版主程序确认 `launchMode=packaged`，设备数 `video=1/audio=1/render=1`，默认会话绑定 1 路视频和 1 路音频，drain 视频 1 帧/1382400 bytes、音频 5 个 packet/19200 bytes，`stoppedState=idle`，静默卸载后目录、HKCU 卸载项、桌面快捷方式和开始菜单快捷方式均无残留；随后 `npm run test:all:poc` 完整回归通过，耗时约 69.3 秒。
   - 真实 LiveKit preflight 阶段新增 `npm run server:poc:livekit-preflight` 和 `npm run server:poc:livekit-preflight:smoke`：主脚本读取服务端 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET`，使用 RoomService 创建/查询/删除唯一测试 room，并通过业务服务为同一 room 签发 OR host 和手机观察端真实 JWT；smoke 已加入 `npm run test:all:poc`，在无凭据环境验证返回 `missing-livekit-env` 阻塞而不是误报通过。本机当前未设置真实 `LIVEKIT_*`，真实 LiveKit server 连通性尚未完成；本轮执行 `server:poc:livekit-preflight:smoke` 通过，直接执行 `server:poc:livekit-preflight` 按预期 blocked，`npm run test:all:poc` 完整回归通过，耗时约 69.9 秒。
+  - 三包部署标准阶段完成文档调整：新增 `docs/deployment-package-split.md`，确认后续按 `SmartST Server`、`SmartST OR Agent`、`SmartST Desktop Client` 三个部署单元推进；三者可以同装在手术室电脑，也可以分机部署，但必须保持进程、权限、配置、API secret、Windows Service 和升级边界分离。已同步根 README、架构文档、可行性文档、开发计划、启动基线、测试计划和下一阶段记录。
 - 阻塞：
   - 当前 4 路摄像头基础链路可打开，但不满足 4 路 30fps 实时验收；按当前阶段决策，该性能降级只记录为开发机限制，不阻塞后续 Native Worker 开发。
   - 正式现场验证仍需要目标 USB 采集卡、目标摄像机和 30 分钟/2 小时压力测试。
 - 下一步：
-  - 用真实 `LIVEKIT_URL`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 启动业务服务，并由桌面 LiveKit PoC 面板连接真实房间。
-  - 使用 `media-worker:native:audio-profile` 分别采集静音、讲话、外接全向麦样本；使用 `media-worker:native:session-backpressure` 增加周期性 drain 场景，再推进重采样、AEC、预览、发布和录像消费者接入。
-  - 将 Native Worker start/status/stop 控制面板推进到更完整的通道状态展示、错误恢复和 4 路硬件递增验证。
+  - 先固化 `packages/contracts` 或等价共享合同，覆盖 endpoint、room、mediaPolicy、token grants、agent status、recording status。
+  - 将 `server-poc` 演进为 SmartST Server 原型，并准备本机 LiveKit 配置、API secret 存储、RoomService preflight 和 Windows Service 安装边界。
+  - 将 Tauri 后端中的 Native Worker 管理能力抽象为 SmartST OR Agent API，再继续推进真实 LiveKit 房间、4 路硬件递增验证、重采样/AEC、预览、发布和录像消费者接入。

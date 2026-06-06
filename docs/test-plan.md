@@ -59,6 +59,21 @@ npm run tauri:install-smoke
 - `src-tauri\target\release\nsis\x64\installer.nsi` 中必须包含 `File /a "/oname=bin\smartst-native-worker.exe"` 和卸载删除项。
 - `tauri:install-smoke` 只允许安装到 `SmartSTLiteNsisSmoke-*` 或 `SmartSTLiteNsisTest-*` 测试目录；必须验证安装文件、HKCU 卸载项、桌面/开始菜单快捷方式、安装目录 Worker 控制面、安装版主程序内部 smoke，以及静默卸载后无目录/注册表/快捷方式残留。安装版主程序内部 smoke 必须通过 `SMARTST_DESKTOP_SMOKE=1` 启动 installed exe，并要求 `SMARTST_DESKTOP_SMOKE_REQUIRE_PACKAGED=1`、`SMARTST_DESKTOP_SMOKE_REQUIRE_AV=1` 下 packaged Worker ready、`start`、视频 drain、音频 drain 和 `stop` 全部通过。
 
+### L0.6 三包部署边界验证
+
+目标：确认后续发布不再把 LiveKit、业务服务、OR Agent 和 UI 混成同一生命周期。
+
+当前阶段先做文档和脚本级验证，正式 Windows Service 验证在服务化实现后补齐。
+
+通过标准：
+
+- 安装角色必须能表达 `SmartST Server`、`SmartST OR Agent`、`SmartST Desktop Client`。
+- Server 可同装手术室电脑，也可独立安装；Desktop Client 只配置 Server URL 和 OR Agent URL。
+- `LIVEKIT_API_SECRET` 只允许存在于 Server 配置或服务环境中。
+- Desktop Client 关闭不应作为 Server、LiveKit、OR Agent 或录像停止条件。
+- OR Agent 必须能在无 UI 场景下执行设备枚举、短时采集和 stop 清理 smoke。
+- 一体机 preflight 必须覆盖 Server、LiveKit、OR Agent、Native Worker、端口、防火墙和默认 room。
+
 ### L1 本机设备预检
 
 目标：验证 Windows 本机能枚举并短时打开媒体设备。
@@ -97,7 +112,7 @@ npm run media-worker:device-probe
 
 ### L3 LiveKit 与业务服务
 
-目标：验证真实 server、真实 JWT、真实房间互动。
+目标：验证 SmartST Server、真实 JWT、真实房间互动。
 
 命令：
 
@@ -112,8 +127,8 @@ npm run server:poc:livekit-preflight
 
 前置条件：
 
-- LiveKit server 可访问。
-- 业务服务能签发短期 JWT。
+- SmartST Server 可访问；一体机部署时可通过手术室电脑固定 IP 访问。
+- SmartST Server 能签发短期 JWT。
 - 客户端没有 LiveKit API secret。
 - TURN/TLS 策略明确。
 

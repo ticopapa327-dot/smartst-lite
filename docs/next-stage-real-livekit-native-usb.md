@@ -4,6 +4,8 @@
 > 阶段：真实 LiveKit JWT / Native Worker / 4 路 USB 硬件验证  
 > 状态：已进入；4 路摄像头基础链路可并发打开，目标 USB 采集卡现场压力验证未完成。
 
+> 2026-06-06 架构调整：后续按 SmartST Server、SmartST OR Agent、SmartST Desktop Client 三包推进。三包可以同装在手术室电脑，也可以分机部署；逻辑边界、服务生命周期、API secret 和安装角色必须分离。详见 `docs/deployment-package-split.md`。
+
 ## 1. 本阶段目标
 
 本阶段不再扩展 mock UI，而是验证三条生产关键链路：
@@ -11,6 +13,7 @@
 - 真实 LiveKit JWT：业务服务使用服务端 API key/secret 签发短期 JWT。
 - Native Worker：确认正式 Worker 技术路线和本机原生工具链就绪。
 - 4 路 USB：用真实 USB 采集卡验证 4 路并发打开能力。
+- 三包服务化：将当前 PoC 演进为 SmartST Server、SmartST OR Agent、Desktop Client 的独立部署和生命周期。
 
 最近一次完整回归：
 
@@ -71,6 +74,7 @@ npm run test:all:poc
 
 - `LIVEKIT_API_SECRET` 只能在服务端环境变量中出现。
 - 桌面端、手机 H5、Android 平板端不得保存或传入 API secret。
+- 在一体机部署中，服务端环境变量仍只属于 SmartST Server，不属于 Desktop Client 或 OR Agent。
 
 ## 3. Native Worker 就绪检查
 
@@ -1015,9 +1019,12 @@ npm run media-worker:usb4-validate
 
 建议顺序：
 
-1. 准备真实 LiveKit server 和服务端 API key/secret。
-2. 用真实环境变量启动 `server-poc`，让桌面 LiveKit PoC 面板连接真实 room。
-3. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
-4. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 native payload frameQueue。
-5. 用 `media-worker:native:audio-profile` 分别采集静音、讲话、外接全向麦样本，再进入重采样和 AEC 边界验证。
-6. 将视频/音频 native payload queue 对接实际预览、LiveKit native publisher 或录像写入前，继续补充周期性 drain/backpressure 场景和格式协商策略。
+1. 固化三包服务化目录和 contracts：SmartST Server、SmartST OR Agent、Desktop Client。
+2. 将 `server-poc` 演进为 SmartST Server 原型，支持本机 LiveKit 配置、API secret 存储、RoomService preflight 和角色安装准备。
+3. 将 Tauri 后端中的 Native Worker 管理能力抽象为 OR Agent API，保持 Desktop Client 只调用控制面。
+4. 准备真实 LiveKit 服务节点；一体机部署时服务节点就是手术室电脑。
+5. 用真实环境变量启动 SmartST Server，让桌面 LiveKit PoC 面板连接真实 room。
+6. 接入 4 路 USB 采集卡，执行 30 分钟 `media-worker:usb4-validate`。
+7. 执行 Native Worker 1/2/4 路递增 session-stress，验证多路 Media Foundation 线程和 native payload frameQueue。
+8. 用 `media-worker:native:audio-profile` 分别采集静音、讲话、外接全向麦样本，再进入重采样和 AEC 边界验证。
+9. 将视频/音频 native payload queue 对接实际预览、LiveKit native publisher 或录像写入前，继续补充周期性 drain/backpressure 场景和格式协商策略。

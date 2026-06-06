@@ -9,13 +9,19 @@
 开发方向采用：
 
 ```text
-Windows 手术室客户端
-  Tauri/React UI
-  Native Media Worker
+SmartST Server
+  LiveKit Server
+  业务服务
+  JWT / 呼叫 / 权限 / 审计
 
-Windows 示教室客户端
-  Tauri/React UI
-  LiveKit 订阅/交互
+SmartST OR Agent
+  Native Media Worker
+  USB 采集 / PTZ / 录像 / 设备恢复
+
+SmartST Desktop Client
+  手术室 UI
+  示教室 UI
+  LiveKit 订阅/交互 UI
 
 Android 会议平板客户端
   正式客户端
@@ -25,20 +31,18 @@ Android 会议平板客户端
   web-observer
   单向收看
 
-业务服务
-  呼叫、权限、token、HIS、录像索引、上传、审计
-
-LiveKit/SFU
-  实时音视频转发
-  手机多并发媒体转发
+部署模式
+  手术室电脑一体机：Server + OR Agent + Desktop Client
+  分机部署：Server 独立，手术室电脑运行 OR Agent + Desktop Client
 ```
 
 关键边界：
 
 - USB UVC/USB 采集卡是默认视频输入；RTSP/SRT 是高级兼容或备选输入。
 - LiveKit 只做实时房间、权限、音视频转发、Data/RPC 和可选 Egress。
-- Native Media Worker 负责 Windows 本地采集、编码、录像、PTZ、设备恢复。
-- 业务服务负责所有 token、呼叫、HIS、文件、上传、审计和人数控制。
+- SmartST Server 负责 LiveKit 服务、token、呼叫、HIS、文件、上传、审计和人数控制。
+- SmartST OR Agent 负责 Windows 本地采集、Native Worker、编码、录像、PTZ、设备恢复。
+- Desktop Client 只做 UI 和人工操作入口；UI 关闭不应结束 Server 或 OR Agent。
 - 手机端不安装客户端，只做 H5 单向收看，不发布音频/视频/Data。
 - 手机多并发必须由 LiveKit/SFU 转发；手术室端只发布一次默认画面。
 - Android 会议平板可以安装客户端，是正式示教/会诊终端。
@@ -50,6 +54,7 @@ LiveKit/SFU
 | --- | --- | --- |
 | `README.md` | 0.1.4 ONVIF/RTSP MVP 历史说明 | 仅作现状参考，不能作为新架构开发依据 |
 | `docs/usb-first-rearchitecture.md` | USB-first 重构方向 | 架构转向依据 |
+| `docs/deployment-package-split.md` | Server / OR Agent / Desktop Client 三包标准 | 安装器、服务化和部署边界主文档 |
 | `docs/livekit-desktop-surgery-teaching-architecture.md` | 完整功能架构 | 产品和系统架构主文档 |
 | `docs/livekit-native-media-worker-service-feasibility.md` | LiveKit + Worker + 业务服务可行性 | 技术实现和 PoC 主文档 |
 | `docs/livekit-desktop-surgery-teaching-development-plan.md` | 阶段计划和验收 | 排期和验收主文档 |
@@ -60,29 +65,30 @@ LiveKit/SFU
 
 进入编码前必须解决的文档问题：
 
-- 根 `README.md` 仍以 ONVIF/RTSP MVP 为主，需要在开发分支上改成新架构入口。
-- `package.json` 描述仍是 “up to two ONVIF cameras”，需要在新架构第一轮代码开始时更新。
+- 根 `README.md` 已更新为新架构入口；后续仍需随三包服务化继续维护。
 - 当前文档已经确认不能继续把 ONVIF/RTSP 作为主流程。
+- 后续编码必须按 `docs/deployment-package-split.md` 拆分 Server、OR Agent 和 Desktop Client 职责。
 
 ## 3. 当前代码基线
 
 当前代码状态：
 
-- 客户端：Tauri 2 + React + TypeScript + Vite。
-- Rust：Tauri commands 已实现配置、日志、ONVIF、RTSP/HLS 预览相关能力。
-- `src/domain/types.ts` 仍是 `CameraConfig` / ONVIF / RTSP 模型。
-- `src/services/realtimeService.ts` 仍是本地假房间状态，LiveKit 未接入。
-- `package.json` 尚无 `livekit-client`，尚无业务服务、Media Worker、Android 客户端、H5 观察端。
+- 客户端：Tauri 2 + React + TypeScript + Vite，已有 USB-first 工作台和 LiveKit UI PoC。
+- Rust/Tauri：已接入 Native Worker readiness、device probe、start/status/stop/drain 控制面和安装版 desktop smoke。
+- `server-poc` 已实现端点、呼叫、room、mock token、真实 JWT smoke、LiveKit preflight smoke。
+- `web-observer-poc` 已实现手机 H5 subscribe-only PoC。
+- Native Worker 已具备 Media Foundation/WASAPI 枚举、短时采集、payload queue、drain、导出和 backpressure smoke。
+- 尚未完成 SmartST Server / SmartST OR Agent 的正式 Windows Service 化拆分。
 
 不能误判：
 
-- 当前仓库不是 LiveKit 可运行版本。
-- 当前预览链路仍偏 RTSP/HLS，不是 USB-first 4 路采集。
-- 当前呼叫状态是本地 TODO，不是实际信令。
+- 当前仓库不是可交付生产版。
+- 当前 LiveKit 真实 server 连通性只到 preflight 脚本，未完成双 Windows + 手机 H5 现场房间实测。
+- 当前 Native Worker 已能采集和 drain payload，但尚未接入正式预览纹理、LiveKit publisher 或录像写入。
 
 ## 4. 目标模块划分
 
-建议从当前单体仓库逐步演进，不要一开始大规模搬目录。
+建议从当前单体仓库逐步演进，但目标边界已调整为三包结构，不再继续把服务端、手术室后端和 UI 混在同一个桌面进程内。
 
 第一阶段新增：
 
@@ -106,6 +112,7 @@ server-poc/
   token-service
   endpoint-registry
   call-signaling
+  livekit-preflight
 
 media-worker-poc/
   synthetic-publisher
@@ -116,19 +123,21 @@ web-observer-poc/
   phone-watch-only-page
 ```
 
-第二阶段再评估是否改成 workspace：
+第二阶段按三包结构迁移为 workspace：
 
 ```text
-apps/windows-client
+apps/desktop-client
 apps/android-tablet
 apps/web-observer
-services/business-service
-workers/media-worker
+services/smartst-server
+agents/or-agent
+workers/native-media-worker
 packages/contracts
 infra/livekit
+infra/windows-service
 ```
 
-不建议第一天就重构为完整 monorepo。当前更重要的是验证媒体链路。
+不建议一次性大搬目录。当前更重要的是先把 contracts、Server API 和 OR Agent API 边界固定，再逐步迁移。
 
 ## 5. 开发顺序
 

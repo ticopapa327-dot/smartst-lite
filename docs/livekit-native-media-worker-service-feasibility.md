@@ -2,28 +2,32 @@
 
 > 适用仓库：`D:\我的工作\AOV\SmartST Lite`  
 > 编写日期：2026-06-05  
-> 结论：该组合可行，但必须按三层职责拆开实现。LiveKit 负责实时房间与媒体分发，Native Media Worker 负责 Windows 本地采集/编码/录像/设备控制，业务服务负责呼叫、权限、患者绑定、录像索引、上传和审计。不能把本地采集录像交给 LiveKit，也不能把业务权限交给客户端 UI。
+> 结论：该组合可行，但必须按三包职责拆开实现。SmartST Server 负责 LiveKit、业务服务、JWT、呼叫、权限、审计和可选 HIS/上传；SmartST OR Agent 负责 Windows 本地采集、Native Media Worker、PTZ、预览、录像和设备恢复；Desktop Client 只做 UI 和人工操作入口。不能把本地采集录像交给 LiveKit，也不能把业务权限交给客户端 UI。
 
 ## 1. 总体判断
 
-推荐采用：
+推荐采用三包结构：
 
 ```text
-Tauri/React UI
-  -> 业务服务 API / WebSocket
-  -> Native Media Worker 本地 IPC
-
-Native Media Worker
-  -> Windows Media Foundation / WASAPI / PTZ SDK
-  -> LiveKit C++ SDK 或 WebRTC 发布层
-  -> 本地 MP4 分段录像
-
-业务服务
+SmartST Server
+  -> LiveKit Server / TURN
   -> LiveKit Server API / Token
   -> HIS Adapter
   -> Recording Index / Upload / Audit
-  -> LiveKit Server / TURN / 可选 Egress
+
+SmartST OR Agent
+  -> Native Media Worker
+  -> Windows Media Foundation / WASAPI / PTZ SDK
+  -> 本地预览 / 本地 MP4 分段录像
+  -> LiveKit C++ SDK、WebRTC 发布层或后续发布组件
+
+SmartST Desktop Client
+  -> SmartST Server API / WebSocket
+  -> SmartST OR Agent API / 本机控制面
+  -> LiveKit Client 订阅/交互 UI
 ```
+
+物理部署不强制独立服务器。默认现场可以把三包同装在手术室电脑上；工程上仍必须保持进程、权限、配置和升级边界分离。详细标准见 `docs/deployment-package-split.md`。
 
 可行性分级：
 
@@ -41,14 +45,15 @@ Native Media Worker
 | 多显示器扩展 | 可行 | UI/Tauri 多窗口 + 远端 track 渲染 |
 | PTZ/镜头控制 | 条件可行 | 必须锁定设备协议和 SDK |
 
-## 2. 三层职责
+## 2. 三包职责
 
-### 2.1 LiveKit 层
+### 2.1 SmartST Server
 
-LiveKit 负责实时通信，不负责本地采集卡和医疗业务。
+SmartST Server 是控制面和实时服务节点。它可以安装在手术室电脑，也可以安装在独立院内主机。它包含 LiveKit Server 和业务服务，但二者仍是独立进程。
 
 职责：
 
+- 启动和管理 LiveKit Server 配置。
 - 房间：每台手术或每次示教创建一个 room。
 - 参与者：手术室端、示教室端、观察者、可选录制参与者。
 - 轨道：主画面、辅助画面、麦克风、可选屏幕共享。
@@ -58,17 +63,21 @@ LiveKit 负责实时通信，不负责本地采集卡和医疗业务。
 - 手机 H5 观察者：只订阅默认画面，由 LiveKit/SFU 负责一对多转发。
 - Android 会议平板：作为正式客户端参与房间，权限由业务服务 token 控制。
 - 可选 Egress：用于远端房间合成录制或云端备份，不替代手术室本地录像。
+- 客户端注册、呼叫、接受、拒绝、挂断。
+- HIS 查询、患者绑定、录像索引、上传和审计。
+- 保存 `LIVEKIT_API_SECRET`、HIS 凭据和服务侧配置。
 
 不负责：
 
 - USB 采集卡枚举和稳定打开。
 - PTZ/镜头控制。
 - 长时间本地录像和断电恢复。
-- HIS 查询、患者绑定、FTP 上传、审计。
+- USB 设备驱动级恢复。
+- 本地长时间录像写入。
 
-### 2.2 Native Media Worker 层
+### 2.2 SmartST OR Agent
 
-Native Media Worker 是 Windows 本地媒体执行进程。它应该是独立进程，不建议只做 Tauri Rust command 内嵌线程，原因是媒体采集和编码可能崩溃、卡死或泄漏资源，独立进程更容易重启和隔离。
+SmartST OR Agent 是手术室电脑上的本地后端。Native Media Worker 是 OR Agent 管理的媒体执行进程，不建议长期由 Tauri UI 直接托管。媒体采集和编码可能崩溃、卡死或泄漏资源，独立后台服务更容易重启和隔离。
 
 职责：
 
@@ -82,6 +91,7 @@ Native Media Worker 是 Windows 本地媒体执行进程。它应该是独立进
 - 设备热插拔、占用、断流恢复。
 - PTZ/镜头控制适配。
 - 向 LiveKit 发布媒体帧，或向 UI 提供可发布的本地轨道。
+- 向 Desktop Client 提供设备状态、本地预览状态、录像状态和可读错误。
 
 推荐优先级：
 
@@ -90,24 +100,17 @@ Native Media Worker 是 Windows 本地媒体执行进程。它应该是独立进
 3. FFmpeg CLI/libav：录制、转码和协议支持强，做长期服务需处理进程和错误恢复。
 4. DirectShow：仅作为兼容旧采集卡的 fallback；Microsoft 已将 DirectShow 标为 legacy。
 
-### 2.3 业务服务层
+### 2.3 Desktop Client
 
-业务服务是系统控制面，必须独立于 LiveKit。
+Desktop Client 是手术室和示教室的操作入口，不是服务端，不是媒体守护进程。
 
 职责：
 
-- 客户端注册和在线状态。
-- 示教室通过 IP/端点呼叫手术室。
-- 手术室接受/拒绝呼叫。
-- 仅收看/交互/会议模式确认。
-- 手机 H5 观察者访问码、只读 token 和并发限制。
-- Android 会议平板设备注册、客户端 token 和独立并发限制。
-- LiveKit token 短期签发。
-- 房间人数上限和主持控制。
-- HIS 查询和患者绑定。
-- 录像 manifest 入库。
-- 文件导出、上传、失败重试。
-- 审计：登录、呼叫、录像、导出、上传、权限变更。
+- 手术室工作台 UI、示教室工作台 UI。
+- 调用 SmartST Server 发起/接受呼叫、获取短期 token、显示房间状态。
+- 调用 SmartST OR Agent 做设备选择、预览、录像、PTZ 操作。
+- 订阅 LiveKit 远端 track，渲染默认画面和按需画面。
+- 显示服务状态、端口、日志入口和 preflight 结果。
 
 不应放在客户端：
 
@@ -115,29 +118,25 @@ Native Media Worker 是 Windows 本地媒体执行进程。它应该是独立进
 - HIS 凭据。
 - 全局权限判断。
 - 录像删除/上传审计策略。
+- LiveKit Server 或业务服务生命周期。
+- Native Worker 独占采集和长时间录像责任。
 
 ## 3. 进程与通信设计
 
 ### 3.1 Windows 进程
 
 ```text
-SmartST Lite.exe
-  Tauri Shell
-  React UI
-  本地配置、日志、窗口管理
+SmartST Server
+  livekit-server.exe
+  smartst-business-service.exe
 
-smartst-media-worker.exe
-  设备枚举
-  采集、预览、编码、录像
-  PTZ 控制
-  LiveKit Native 发布或本地预览输出
+SmartST OR Agent
+  smartst-or-agent.exe
+  smartst-native-worker.exe
 
-smartst-service
-  院内业务服务
-  可以部署在手术示教服务器，也可开发期本机运行
-
-livekit-server
-  SFU / signaling / TURN 关联配置
+SmartST Desktop Client
+  smartst-lite.exe
+  React/Tauri UI
 ```
 
 ### 3.2 IPC 选择
@@ -685,6 +684,7 @@ Worker：
 | AEC 效果不稳定 | 远程语音不可用 | 推荐硬件 AEC 麦克风，提供音频预设 |
 | RTSP 不走原生 LiveKit Ingress | 网络源接入失败 | 本地 FFmpeg/GStreamer 转接 |
 | 业务服务缺失 | 权限和审计失控 | token、呼叫、HIS、文件全部走服务端 |
+| Server、OR Agent 和 UI 混成一个进程 | UI 崩溃导致服务和录像中断 | 三包逻辑分离，Server/OR Agent 服务化运行 |
 | 手机并发压到手术室端 | 本地预览和录像不稳定 | 手机统一走 LiveKit/SFU 订阅，手术室只发布一次 |
 | 患者信息泄漏 | 合规风险 | 文件名脱敏、日志脱敏、审计 |
 
@@ -712,11 +712,12 @@ No-Go 条件：
 
 第一轮只做 5 个任务：
 
-1. `server-poc`：最小业务服务，支持 room、token、call。
-2. `livekit-ui-poc`：当前 Tauri UI 加入 LiveKit，发布一路摄像头和麦克风。
-3. `worker-synthetic-poc`：Native Worker 生成测试帧并发布到 LiveKit。
-4. `worker-mf-capture-poc`：Native Worker 用 Media Foundation 打开 1 路 USB 采集卡。
-5. `recording-poc`：Worker 写 1 路 2 小时 MP4 + manifest。
+1. `smartst-server-poc`：从 `server-poc` 演进，支持 room、token、call、LiveKit preflight 和服务端配置。
+2. `or-agent-poc`：从 Tauri 后端和 `native-worker` 演进，支持 Worker lifecycle、device probe、start/status/stop/drain。
+3. `desktop-client-poc`：当前 Tauri UI 只调用 Server 和 OR Agent，加入 LiveKit 并展示远端 track。
+4. `worker-synthetic-publisher-poc`：Native Worker 或 OR Agent 发布测试帧到 LiveKit。
+5. `worker-mf-capture-poc`：Native Worker 用 Media Foundation 打开 1 路 USB 采集卡。
+6. `recording-poc`：Worker 写 1 路 2 小时 MP4 + manifest。
 
 不要先做 HIS、FTP、AI、多显示器和完整会议模式。底层媒体闭环没过之前，这些功能只会放大返工。
 
