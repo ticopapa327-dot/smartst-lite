@@ -11,14 +11,28 @@ export type RoomMode = "watch" | "interactive" | "conference";
 export type ParticipantRole =
   | "or-host"
   | "teacher"
+  | "teacher-watch"
+  | "teacher-interactive"
   | "tablet"
   | "web-observer"
   | "recorder"
   | "service";
 
+export type DefaultChannelSelectionReason =
+  | "manual-accept"
+  | "local-primary"
+  | "remote-default"
+  | "priority"
+  | "audio-only";
+
+export type StartupVideoMode = "default-video" | "audio-only";
+
 export interface AcceptedCallMediaPolicy {
   defaultChannelId?: string;
   defaultTrackName?: string;
+  defaultChannelDisplayName?: string;
+  defaultSelectionReason: DefaultChannelSelectionReason;
+  startupVideoMode: StartupVideoMode;
   mode: RoomMode;
   allowedChannelIds: string[];
   publishOtherChannelsOnDemand: boolean;
@@ -69,4 +83,3 @@ export interface TeachingCall {
   createdAt: string;
   updatedAt?: string;
 }
-

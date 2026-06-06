@@ -17,6 +17,48 @@ const VALID_CLIENT_TYPES = new Set([
 ]);
 
 const VALID_ROOM_MODES = new Set(["watch", "interactive", "conference"]);
+const DEFAULT_VIDEO_CHANNELS = Object.freeze([
+  {
+    id: "field-camera",
+    displayName: "术野摄像机",
+    enabled: true,
+    health: "unknown",
+    localPrimary: true,
+    remoteDefault: true,
+    priority: 10,
+    trackName: "video:field-camera",
+  },
+  {
+    id: "panorama",
+    displayName: "全景摄像机",
+    enabled: true,
+    health: "unknown",
+    localPrimary: false,
+    remoteDefault: false,
+    priority: 20,
+    trackName: "video:panorama",
+  },
+  {
+    id: "endoscope",
+    displayName: "腹腔镜 / 内镜",
+    enabled: true,
+    health: "unknown",
+    localPrimary: false,
+    remoteDefault: false,
+    priority: 30,
+    trackName: "video:endoscope",
+  },
+  {
+    id: "aux-device",
+    displayName: "辅助医疗设备",
+    enabled: true,
+    health: "unknown",
+    localPrimary: false,
+    remoteDefault: false,
+    priority: 40,
+    trackName: "video:aux-device",
+  },
+]);
 
 function createTokenConfig(options) {
   const mode = options.tokenMode || process.env.LIVEKIT_TOKEN_MODE || "mock";
@@ -246,10 +288,6 @@ function createCall(state, body) {
 async function acceptCall(state, callId, body) {
   const call = getCall(state, callId);
   const acceptedMode = assertRoomMode(body.mode || call.requestedMode);
-  const defaultChannelId = body.defaultChannelId || "field-camera";
-  const allowedChannelIds = Array.isArray(body.allowedChannelIds)
-    ? body.allowedChannelIds
-    : ["field-camera", "panorama", "endoscope", "aux-device"];
   const limits = {
     ...state.limits,
     ...(body.limits ?? {}),
@@ -258,8 +296,11 @@ async function acceptCall(state, callId, body) {
   const room = createRoom(state, {
     roomCode: body.roomCode,
     mode: acceptedMode,
-    defaultChannelId,
-    allowedChannelIds,
+    defaultChannelId: body.defaultChannelId,
+    defaultTrackName: body.defaultTrackName,
+    allowedChannelIds: body.allowedChannelIds,
+    channels: body.channels,
+    publishOtherChannelsOnDemand: body.publishOtherChannelsOnDemand,
     limits,
   });
 
@@ -287,19 +328,12 @@ function createRoom(state, body) {
   const roomId = body.roomId || `room-${randomUUID()}`;
   const roomCode = body.roomCode || `ST-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(state.rooms.size + 1).padStart(3, "0")}`;
   const now = new Date().toISOString();
+  const mediaPolicy = buildAcceptedMediaPolicy(body, mode);
   const room = {
     roomId,
     roomCode,
     mode,
-    mediaPolicy: {
-      defaultChannelId: body.defaultChannelId || "field-camera",
-      defaultTrackName: body.defaultTrackName || "video:field-camera",
-      mode,
-      allowedChannelIds: Array.isArray(body.allowedChannelIds)
-        ? body.allowedChannelIds
-        : ["field-camera"],
-      publishOtherChannelsOnDemand: body.publishOtherChannelsOnDemand ?? true,
-    },
+    mediaPolicy,
     limits: {
       ...state.limits,
       ...(body.limits ?? {}),
@@ -314,6 +348,166 @@ function createRoom(state, body) {
   };
   state.rooms.set(room.roomId, room);
   return room;
+}
+
+function buildAcceptedMediaPolicy(body, mode) {
+  const providedChannels = normalizeVideoChannels(body.channels);
+  const channels = providedChannels.length > 0 ? providedChannels : DEFAULT_VIDEO_CHANNELS;
+  const requestedDefaultChannelId = optionalString(body.defaultChannelId);
+  const explicitAllowedChannelIds = normalizeChannelIds(body.allowedChannelIds);
+  const allowedChannelIds =
+    explicitAllowedChannelIds.length > 0
+      ? explicitAllowedChannelIds
+      : inferAllowedChannelIds(channels, requestedDefaultChannelId);
+  const selection = resolveDefaultChannel({
+    allowedChannelIds,
+    channels,
+    providedChannels,
+    requestedDefaultChannelId,
+  });
+
+  return {
+    defaultChannelId: selection.channel?.id,
+    defaultTrackName: selection.channel
+      ? explicitTrackName(body.defaultTrackName) || trackNameFor(selection.channel)
+      : undefined,
+    defaultChannelDisplayName: selection.channel?.displayName,
+    defaultSelectionReason: selection.reason,
+    startupVideoMode: selection.channel ? "default-video" : "audio-only",
+    mode,
+    allowedChannelIds,
+    publishOtherChannelsOnDemand: body.publishOtherChannelsOnDemand ?? true,
+  };
+}
+
+function resolveDefaultChannel({
+  allowedChannelIds,
+  channels,
+  providedChannels,
+  requestedDefaultChannelId,
+}) {
+  const allowed = new Set(allowedChannelIds);
+
+  if (requestedDefaultChannelId) {
+    if (!allowed.has(requestedDefaultChannelId)) {
+      throw new HttpError(
+        400,
+        "invalid-default-channel",
+        "defaultChannelId must be included in allowedChannelIds",
+      );
+    }
+
+    const channel = channels.find((candidate) => candidate.id === requestedDefaultChannelId);
+    if (providedChannels.length > 0 && !channel) {
+      throw new HttpError(
+        400,
+        "invalid-default-channel",
+        "defaultChannelId must exist in the accepted channel list",
+      );
+    }
+    if (channel && !isSelectableChannel(channel)) {
+      throw new HttpError(
+        409,
+        "unavailable-default-channel",
+        "defaultChannelId is disabled or offline",
+      );
+    }
+
+    return {
+      channel: channel ?? virtualChannel(requestedDefaultChannelId),
+      reason: "manual-accept",
+    };
+  }
+
+  const candidates = channels.filter(
+    (channel) => allowed.has(channel.id) && isSelectableChannel(channel),
+  );
+  const localPrimary = pickHighestPriority(candidates.filter((channel) => channel.localPrimary));
+  if (localPrimary) {
+    return { channel: localPrimary, reason: "local-primary" };
+  }
+
+  const remoteDefault = pickHighestPriority(candidates.filter((channel) => channel.remoteDefault));
+  if (remoteDefault) {
+    return { channel: remoteDefault, reason: "remote-default" };
+  }
+
+  const priorityDefault = pickHighestPriority(candidates);
+  if (priorityDefault) {
+    return { channel: priorityDefault, reason: "priority" };
+  }
+
+  return { channel: undefined, reason: "audio-only" };
+}
+
+function normalizeVideoChannels(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((channel) => {
+      if (!channel || typeof channel !== "object") return undefined;
+      const id = optionalString(channel.id);
+      if (!id) return undefined;
+      return {
+        id,
+        displayName: optionalString(channel.displayName) || id,
+        enabled: channel.enabled !== false,
+        health: optionalString(channel.health) || (channel.healthy === false ? "offline" : "healthy"),
+        localPrimary: channel.localPrimary === true,
+        remoteDefault: channel.remoteDefault === true,
+        priority: Number.isFinite(Number(channel.priority)) ? Number(channel.priority) : 1000,
+        trackName: explicitTrackName(channel.trackName),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeChannelIds(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const channelIds = [];
+  for (const item of value) {
+    const channelId = optionalString(item);
+    if (channelId && !seen.has(channelId)) {
+      seen.add(channelId);
+      channelIds.push(channelId);
+    }
+  }
+  return channelIds;
+}
+
+function inferAllowedChannelIds(channels, requestedDefaultChannelId) {
+  const allowedChannelIds = channels
+    .filter((channel) => channel.enabled !== false)
+    .map((channel) => channel.id);
+  if (requestedDefaultChannelId && !allowedChannelIds.includes(requestedDefaultChannelId)) {
+    allowedChannelIds.unshift(requestedDefaultChannelId);
+  }
+  return allowedChannelIds;
+}
+
+function isSelectableChannel(channel) {
+  return channel.enabled !== false && channel.health !== "offline" && channel.health !== "error";
+}
+
+function pickHighestPriority(channels) {
+  return [...channels].sort((left, right) => left.priority - right.priority)[0];
+}
+
+function trackNameFor(channel) {
+  return channel.trackName || `video:${channel.id}`;
+}
+
+function virtualChannel(channelId) {
+  return {
+    id: channelId,
+    displayName: channelId,
+    enabled: true,
+    health: "unknown",
+    localPrimary: false,
+    remoteDefault: false,
+    priority: 1000,
+    trackName: `video:${channelId}`,
+  };
 }
 
 async function issueToken(state, roomId, body) {
@@ -333,6 +527,9 @@ async function issueToken(state, roomId, body) {
     mode: clientType === "web-observer" ? "watch-only" : body.mode || room.mode,
     role,
     roomCode: room.roomCode,
+    defaultChannelId: room.mediaPolicy.defaultChannelId,
+    defaultTrackName: room.mediaPolicy.defaultTrackName,
+    startupVideoMode: room.mediaPolicy.startupVideoMode,
   };
   const tokenPayload = {
     type: `${state.tokenConfig.mode}-livekit-token`,
@@ -359,6 +556,7 @@ async function issueToken(state, roomId, body) {
     livekitUrl: state.tokenConfig.livekitUrl,
     room,
     grants,
+    metadata,
   };
 }
 
@@ -512,6 +710,15 @@ function requiredString(value, fieldName) {
     throw new HttpError(400, "missing-field", `${fieldName} is required`);
   }
   return value.trim();
+}
+
+function optionalString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function explicitTrackName(value) {
+  const trackName = optionalString(value);
+  return trackName || undefined;
 }
 
 function snapshotState(state) {

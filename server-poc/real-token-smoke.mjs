@@ -62,6 +62,12 @@ try {
   assert(observerPayload.video.canSubscribe === true, "observer can subscribe");
   assert(observerPayload.video.canPublishData === false, "observer cannot publish data");
   assert(JSON.parse(observerPayload.metadata).mode === "watch-only", "observer metadata is watch-only");
+  assert(hostToken.metadata.defaultChannelId === "field-camera", "host token response has default channel");
+  assert(hostToken.metadata.defaultTrackName === "video:field-camera", "host token response has default track");
+  assert(observerToken.metadata.defaultChannelId === "field-camera", "observer token response has default channel");
+  assert(JSON.parse(hostPayload.metadata).defaultChannelId === "field-camera", "host JWT metadata has default channel");
+  assert(JSON.parse(hostPayload.metadata).startupVideoMode === "default-video", "host JWT metadata has startup video mode");
+  assert(JSON.parse(observerPayload.metadata).defaultTrackName === "video:field-camera", "observer JWT metadata has default track");
 
   console.log("server-poc real token smoke passed");
 } finally {

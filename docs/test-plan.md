@@ -88,7 +88,7 @@ npm run media-worker:device-probe
 | 手术室呼叫示教室 | 反向呼叫成立 |
 | 仅收看模式 | 远端不能发布音视频 |
 | 交互模式 | 双向语音稳定 |
-| 默认画面 | 接通后显示策略一致 |
+| 默认画面 | 业务服务返回 `mediaPolicy`，默认画面选择原因可审计；token metadata 和真实 JWT metadata 与 `mediaPolicy` 一致；无可用视频时进入 audio-only |
 | 请求其他通道 | 按需订阅，不默认全量推送 |
 | 手机 H5 并发 | 手机端只订阅，手术室端只发布一次默认画面 |
 | 人数超限 | 新用户收到明确提示 |

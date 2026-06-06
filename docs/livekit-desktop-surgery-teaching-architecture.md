@@ -203,11 +203,21 @@ export interface VideoChannel {
 export interface AcceptedCallMediaPolicy {
   defaultChannelId?: string;
   defaultTrackName?: string;
+  defaultChannelDisplayName?: string;
+  defaultSelectionReason:
+    | "manual-accept"
+    | "local-primary"
+    | "remote-default"
+    | "priority"
+    | "audio-only";
+  startupVideoMode: "default-video" | "audio-only";
   mode: "watch" | "interactive" | "conference";
   allowedChannelIds: string[];
   publishOtherChannelsOnDemand: boolean;
 }
 ```
+
+当前 `server-poc` 已实现该合同：`accept call` 和 `room create` 都会生成 `mediaPolicy`，并把 `defaultChannelId`、`defaultTrackName`、`startupVideoMode` 同步写入 token response metadata 和真实 LiveKit JWT metadata。客户端启动布局必须读取该合同，不得按设备枚举顺序或 LiveKit track 到达顺序猜测默认画面。
 
 执行规则：
 

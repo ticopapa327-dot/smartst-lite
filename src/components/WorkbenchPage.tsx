@@ -87,8 +87,9 @@ export function WorkbenchPage({ organizationName }: WorkbenchPageProps) {
   const [nativeReadiness, setNativeReadiness] =
     useState<NativeWorkerReadiness | null>(null);
   const defaultChannel =
+    defaultChannels.find((channel) => channel.localPrimary) ??
     defaultChannels.find((channel) => channel.remoteDefault) ??
-    defaultChannels.find((channel) => channel.localPrimary);
+    [...defaultChannels].sort((left, right) => left.priority - right.priority)[0];
 
   useEffect(() => {
     let cancelled = false;

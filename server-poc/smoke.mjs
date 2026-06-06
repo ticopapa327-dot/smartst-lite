@@ -33,6 +33,26 @@ try {
   const acceptResponse = await post(`/api/calls/${callResponse.call.id}/accept`, {
     mode: "interactive",
     defaultChannelId: "field-camera",
+    channels: [
+      {
+        id: "panorama",
+        displayName: "Panorama",
+        enabled: true,
+        healthy: true,
+        localPrimary: false,
+        remoteDefault: false,
+        priority: 20,
+      },
+      {
+        id: "field-camera",
+        displayName: "Field Camera",
+        enabled: true,
+        healthy: true,
+        localPrimary: true,
+        remoteDefault: true,
+        priority: 10,
+      },
+    ],
     limits: {
       maxInteractiveParticipants: 2,
       maxTabletClients: 1,
@@ -62,8 +82,113 @@ try {
   assert(watchToken.grants.canSubscribe === true, "web observer can subscribe");
   assert(watchToken.grants.canPublish === false, "web observer cannot publish");
   assert(watchToken.grants.canPublishData === false, "web observer cannot publish data");
+  assert(acceptResponse.room.mediaPolicy.defaultChannelId === "field-camera", "accept default channel is explicit");
+  assert(acceptResponse.room.mediaPolicy.defaultTrackName === "video:field-camera", "accept default track name is derived");
+  assert(acceptResponse.room.mediaPolicy.defaultSelectionReason === "manual-accept", "accept reason is explicit");
+  assert(acceptResponse.room.mediaPolicy.startupVideoMode === "default-video", "accept starts with one default video");
+  assert(watchToken.room.mediaPolicy.defaultChannelId === "field-camera", "observer token includes room default channel");
+  assert(watchToken.room.mediaPolicy.startupVideoMode === "default-video", "observer token includes startup video mode");
+  assert(watchToken.metadata.defaultChannelId === "field-camera", "observer metadata includes default channel");
+  assert(watchToken.metadata.defaultTrackName === "video:field-camera", "observer metadata includes default track");
   assert(secondWatchToken.tokenType === "mock", "second observer token issued");
   assert(limitResult.error === "web-observer-limit", "observer limit enforced");
+
+  const localPrimaryRoom = await post(
+    "/api/rooms",
+    {
+      roomCode: "ST-DEFAULT-LOCAL",
+      mode: "watch",
+      channels: [
+        {
+          id: "panorama",
+          displayName: "Panorama",
+          enabled: true,
+          health: "healthy",
+          localPrimary: false,
+          remoteDefault: true,
+          priority: 10,
+        },
+        {
+          id: "field-camera",
+          displayName: "Field Camera",
+          enabled: true,
+          health: "healthy",
+          localPrimary: true,
+          remoteDefault: false,
+          priority: 50,
+        },
+      ],
+    },
+    201,
+  );
+  assert(localPrimaryRoom.room.mediaPolicy.defaultChannelId === "field-camera", "local primary wins before remote default");
+  assert(localPrimaryRoom.room.mediaPolicy.defaultSelectionReason === "local-primary", "local primary reason");
+
+  const priorityRoom = await post(
+    "/api/rooms",
+    {
+      roomCode: "ST-DEFAULT-PRIORITY",
+      mode: "watch",
+      channels: [
+        {
+          id: "endoscope",
+          displayName: "Endoscope",
+          enabled: true,
+          health: "healthy",
+          localPrimary: false,
+          remoteDefault: false,
+          priority: 30,
+        },
+        {
+          id: "panorama",
+          displayName: "Panorama",
+          enabled: true,
+          health: "healthy",
+          localPrimary: false,
+          remoteDefault: false,
+          priority: 20,
+        },
+      ],
+    },
+    201,
+  );
+  assert(priorityRoom.room.mediaPolicy.defaultChannelId === "panorama", "priority fallback picks lowest priority");
+  assert(priorityRoom.room.mediaPolicy.defaultSelectionReason === "priority", "priority reason");
+
+  const audioOnlyRoom = await post(
+    "/api/rooms",
+    {
+      roomCode: "ST-DEFAULT-AUDIO",
+      mode: "interactive",
+      channels: [
+        {
+          id: "field-camera",
+          displayName: "Field Camera",
+          enabled: true,
+          healthy: false,
+          localPrimary: true,
+          remoteDefault: true,
+          priority: 10,
+        },
+      ],
+    },
+    201,
+  );
+  assert(audioOnlyRoom.room.mediaPolicy.defaultChannelId === undefined, "audio-only has no default video channel");
+  assert(audioOnlyRoom.room.mediaPolicy.defaultSelectionReason === "audio-only", "audio-only reason");
+  assert(audioOnlyRoom.room.mediaPolicy.startupVideoMode === "audio-only", "audio-only startup mode");
+
+  const invalidDefault = await post(
+    "/api/rooms",
+    {
+      roomCode: "ST-DEFAULT-INVALID",
+      mode: "watch",
+      defaultChannelId: "field-camera",
+      allowedChannelIds: ["panorama"],
+    },
+    400,
+  );
+  assert(invalidDefault.error === "invalid-default-channel", "invalid default is rejected");
 
   console.log("server-poc smoke passed");
 } finally {

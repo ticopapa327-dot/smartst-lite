@@ -427,21 +427,31 @@ Android 会议平板可以安装客户端，应按正式终端处理，而不是
 1. 手术室端接听呼叫时临时指定的通道。
 2. 手术室端本地工作台当前 `localPrimary=true` 的通道。
 3. 手术室端配置中 `remoteDefault=true` 的通道。
-4. 当前 `enabled=true` 且 `healthy=true` 的通道中 `priority` 最小或最高优先级的一路。
+4. 当前可选择通道中 `priority` 最小或最高优先级的一路。可选择通道至少不能是 `enabled=false`、`health=offline` 或 `health=error`。
 5. 如果没有可用视频，只建立音频，并向双方提示“未检测到可共享画面”。
 
 业务服务在 `POST /api/calls/{callId}/accept` 中保存并返回：
 
 ```json
 {
-  "roomId": "ST-20260605-001",
-  "mode": "interactive",
-  "maxParticipants": 6,
-  "defaultChannelId": "field-camera",
-  "allowedChannelIds": ["field-camera", "panorama", "laparoscope", "device-aux"],
-  "publishOtherChannelsOnDemand": true
+  "room": {
+    "roomId": "room-...",
+    "roomCode": "ST-20260605-001",
+    "mode": "interactive",
+    "mediaPolicy": {
+      "defaultChannelId": "field-camera",
+      "defaultTrackName": "video:field-camera",
+      "defaultChannelDisplayName": "术野摄像机",
+      "defaultSelectionReason": "manual-accept",
+      "startupVideoMode": "default-video",
+      "allowedChannelIds": ["field-camera", "panorama", "endoscope", "aux-device"],
+      "publishOtherChannelsOnDemand": true
+    }
+  }
 }
 ```
+
+当前 `server-poc` 已把 `defaultChannelId`、`defaultTrackName` 和 `startupVideoMode` 同步写入 mock token response metadata 与真实 LiveKit JWT metadata；手机 H5 观察者也能读取这些字段，但权限仍是 subscribe-only。
 
 Worker 执行规则：
 

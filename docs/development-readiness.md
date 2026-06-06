@@ -270,6 +270,14 @@ export interface VideoChannel {
 export interface AcceptedCallMediaPolicy {
   defaultChannelId?: string;
   defaultTrackName?: string;
+  defaultChannelDisplayName?: string;
+  defaultSelectionReason:
+    | "manual-accept"
+    | "local-primary"
+    | "remote-default"
+    | "priority"
+    | "audio-only";
+  startupVideoMode: "default-video" | "audio-only";
   mode: RoomMode;
   allowedChannelIds: string[];
   publishOtherChannelsOnDemand: boolean;

@@ -12,6 +12,7 @@ It is not a production service.
 - Mock token issuance.
 - Real LiveKit JWT signing when explicitly configured.
 - Phone observer token lookup by room code.
+- Accepted-call default video policy with an auditable selection reason.
 - Separate participant limits for interactive clients, Android tablet clients, and phone H5 observers.
 
 ## Start
@@ -67,6 +68,33 @@ Payload:
 ```
 
 The service always issues this path as `clientType=web-observer`, `mode=watch`, and subscribe-only grants.
+
+## Default Video Contract
+
+`POST /api/calls/{callId}/accept` and `POST /api/rooms` build `room.mediaPolicy` before any token is issued. The policy is the authority for the startup layout; clients must not infer the default video from USB device order or LiveKit track order.
+
+Selection order:
+
+1. `defaultChannelId` explicitly supplied by the OR accept action.
+2. Selectable channel marked `localPrimary=true`.
+3. Selectable channel marked `remoteDefault=true`.
+4. Selectable enabled channel with the lowest `priority`.
+5. If no selectable video exists, use `startupVideoMode=audio-only`.
+
+Policy fields:
+
+```json
+{
+  "defaultChannelId": "field-camera",
+  "defaultTrackName": "video:field-camera",
+  "defaultSelectionReason": "manual-accept",
+  "startupVideoMode": "default-video",
+  "allowedChannelIds": ["field-camera", "panorama", "endoscope", "aux-device"],
+  "publishOtherChannelsOnDemand": true
+}
+```
+
+The same default fields are copied into token response `metadata` and real LiveKit JWT metadata. Phone H5 observers receive these fields but still get subscribe-only grants.
 
 ## Important Boundaries
 
