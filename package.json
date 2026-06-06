@@ -36,6 +36,7 @@
     "media-worker:native:audio-probe": "node native-worker/audio-probe.mjs",
     "media-worker:native:audio-render-probe": "node native-worker/audio-render-probe.mjs",
     "media-worker:native:audio-render-silence": "node native-worker/audio-render-silence.mjs",
+    "media-worker:native:audio-loopback-probe": "node native-worker/audio-loopback-probe.mjs",
     "media-worker:native:session": "node native-worker/session.mjs",
     "media-worker:native:format-preference": "node native-worker/format-preference.mjs",
     "media-worker:native:channel-binding": "node native-worker/channel-binding.mjs",

@@ -16,7 +16,7 @@ use windows::Win32::Media::Audio::{
     eCapture, eRender, IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice,
     IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR, AUDCLNT_SHAREMODE_SHARED,
-    DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
 };
 use windows::Win32::Media::MediaFoundation::{
     IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, IMFSample, MFCreateAttributes,
@@ -616,6 +616,11 @@ fn handle_command(state: &mut WorkerState, message: &Value) -> Result<(Value, bo
         )),
         "renderAudioSilence" => Ok((
             render_audio_silence(&params)
+                .map_err(|message| WorkerError::new("native-media-error", message))?,
+            false,
+        )),
+        "captureAudioLoopbackBuffer" => Ok((
+            capture_audio_loopback_buffer(&params)
                 .map_err(|message| WorkerError::new("native-media-error", message))?,
             false,
         )),
@@ -4766,6 +4771,24 @@ fn render_audio_silence(params: &Value) -> Result<Value, String> {
     })
 }
 
+fn capture_audio_loopback_buffer(params: &Value) -> Result<Value, String> {
+    let duration_ms = optional_u32(params, "durationMs")?
+        .unwrap_or(500)
+        .clamp(100, 5_000);
+    let poll_interval_ms = optional_u32(params, "pollIntervalMs")?
+        .unwrap_or(10)
+        .clamp(1, 100);
+    let _com = ComApartment::initialize()?;
+    with_audio_render_devices(|records| {
+        let selected = select_audio_records_with_label(&records, params, "audio render")?;
+        let record = selected
+            .first()
+            .copied()
+            .ok_or_else(|| "No audio render device selected".to_string())?;
+        capture_audio_loopback_buffer_for_record(record, duration_ms, poll_interval_ms)
+    })
+}
+
 fn probe_audio_record_format(record: &AudioDeviceRecord) -> Result<Value, String> {
     let audio_client: IAudioClient = unsafe {
         record
@@ -5074,6 +5097,150 @@ fn write_render_silent_frames(
             .map_err(format_windows_error)?;
     }
     Ok(())
+}
+
+fn capture_audio_loopback_buffer_for_record(
+    record: &AudioDeviceRecord,
+    duration_ms: u32,
+    poll_interval_ms: u32,
+) -> Result<Value, String> {
+    let audio_client: IAudioClient = unsafe {
+        record
+            .device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(format_windows_error)?
+    };
+    with_audio_mix_format(&audio_client, |format_ptr| {
+        let mix_format = wave_format_to_json(format_ptr)?;
+        let format = unsafe { *format_ptr };
+        let block_align = u64::from(format.nBlockAlign.max(1));
+        let stream_buffer_duration_hns = i64::from(duration_ms.max(500)) * 10_000;
+        unsafe {
+            audio_client
+                .Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    AUDCLNT_STREAMFLAGS_LOOPBACK,
+                    stream_buffer_duration_hns,
+                    0,
+                    format_ptr,
+                    None,
+                )
+                .map_err(format_windows_error)?;
+        }
+        let buffer_frame_capacity = unsafe { audio_client.GetBufferSize().ok() };
+        let stream_latency_hns = unsafe { audio_client.GetStreamLatency().ok() };
+        let capture_client: IAudioCaptureClient =
+            unsafe { audio_client.GetService().map_err(format_windows_error)? };
+        unsafe {
+            audio_client.Start().map_err(format_windows_error)?;
+        }
+
+        let started_at = Instant::now();
+        let capture_result = (|| {
+            let mut poll_count = 0u32;
+            let mut packet_count = 0u64;
+            let mut captured_frames = 0u64;
+            let mut captured_bytes = 0u64;
+            let mut silent_packets = 0u64;
+            let mut discontinuity_packets = 0u64;
+            let mut timestamp_error_packets = 0u64;
+            let mut last_device_position = None;
+            let mut last_qpc_position = None;
+
+            while started_at.elapsed() < Duration::from_millis(u64::from(duration_ms)) {
+                poll_count = poll_count.saturating_add(1);
+                let mut packet_size = unsafe {
+                    capture_client
+                        .GetNextPacketSize()
+                        .map_err(format_windows_error)?
+                };
+                while packet_size > 0 {
+                    let mut data_ptr: *mut u8 = ptr::null_mut();
+                    let mut frames_to_read = 0u32;
+                    let mut flags = 0u32;
+                    let mut device_position = 0u64;
+                    let mut qpc_position = 0u64;
+                    unsafe {
+                        capture_client
+                            .GetBuffer(
+                                &mut data_ptr,
+                                &mut frames_to_read,
+                                &mut flags,
+                                Some(&mut device_position),
+                                Some(&mut qpc_position),
+                            )
+                            .map_err(format_windows_error)?;
+                    }
+
+                    packet_count = packet_count.saturating_add(1);
+                    let frame_count = u64::from(frames_to_read);
+                    captured_frames = captured_frames.saturating_add(frame_count);
+                    captured_bytes =
+                        captured_bytes.saturating_add(frame_count.saturating_mul(block_align));
+                    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_SILENT.0) {
+                        silent_packets = silent_packets.saturating_add(1);
+                    }
+                    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0) {
+                        discontinuity_packets = discontinuity_packets.saturating_add(1);
+                    }
+                    if has_audio_buffer_flag(flags, AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0) {
+                        timestamp_error_packets = timestamp_error_packets.saturating_add(1);
+                    }
+                    last_device_position = Some(device_position);
+                    last_qpc_position = Some(qpc_position);
+
+                    unsafe {
+                        capture_client
+                            .ReleaseBuffer(frames_to_read)
+                            .map_err(format_windows_error)?;
+                    }
+                    packet_size = unsafe {
+                        capture_client
+                            .GetNextPacketSize()
+                            .map_err(format_windows_error)?
+                    };
+                }
+                thread::sleep(Duration::from_millis(u64::from(poll_interval_ms)));
+            }
+
+            let status = if packet_count > 0 {
+                "loopback-captured"
+            } else {
+                "no-loopback-packets"
+            };
+            Ok(json!({
+                "status": status,
+                "backend": "wasapi",
+                "device": audio_render_device_record_to_json(record),
+                "mixFormat": mix_format,
+                "durationMs": duration_ms,
+                "elapsedMs": started_at.elapsed().as_millis(),
+                "pollIntervalMs": poll_interval_ms,
+                "pollCount": poll_count,
+                "packetCount": packet_count,
+                "capturedFrames": captured_frames,
+                "capturedBytes": captured_bytes,
+                "silentPackets": silent_packets,
+                "discontinuityPackets": discontinuity_packets,
+                "timestampErrorPackets": timestamp_error_packets,
+                "bufferFrameCapacity": buffer_frame_capacity,
+                "streamLatencyHns": stream_latency_hns,
+                "lastDevicePosition": last_device_position,
+                "lastQpcPosition": last_qpc_position,
+                "loopbackSource": "render",
+                "loopbackClientStatus": "opened-stopped",
+                "audibleOutputGenerated": false,
+                "aecStatus": "not-run",
+                "decodeStatus": "not-decoded"
+            }))
+        })();
+        let stop_result = unsafe { audio_client.Stop().map_err(format_windows_error) };
+        match (capture_result, stop_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
 }
 
 fn with_audio_mix_format<T>(

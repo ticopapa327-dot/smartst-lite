@@ -61,7 +61,7 @@ npm run media-worker:device-probe
 | --- | --- |
 | 无设备启动 | 应用正常启动，提示明确 |
 | Native AV soak | `media-worker:native:av-soak` 至少 5 秒连续采集，视频/音频 copy counters 增长，周期 drain 成功，queue depth 有界，copy error 为 0 |
-| WASAPI render 枚举、格式探测和静音写入 | `media-worker:native:list-devices` 返回 `audioRender` 数组和 `diagnostics.wasapiRender.status`；`media-worker:native:audio-render-probe` 返回 render mix format；`media-worker:native:audio-render-silence` 返回 `renderClientStatus=opened-stopped`、`audibleOutput=silence`、`loopbackCaptured=false` 和 `aecStatus=not-run`；该项不等同有声回放、loopback 或 AEC 通过 |
+| WASAPI render 枚举、格式探测、静音写入和 loopback 初始化 | `media-worker:native:list-devices` 返回 `audioRender` 数组和 `diagnostics.wasapiRender.status`；`media-worker:native:audio-render-probe` 返回 render mix format；`media-worker:native:audio-render-silence` 返回 `renderClientStatus=opened-stopped` 和 `audibleOutput=silence`；`media-worker:native:audio-loopback-probe` 返回 `loopbackClientStatus=opened-stopped`，允许安静系统返回 `no-loopback-packets`；该项不等同有声回放、回放内容捕获或 AEC 通过 |
 | 1 路 USB 采集卡 | 可预览、可短时录像、manifest 正确 |
 | 4 路 USB 采集卡 | 30 分钟不黑屏、不崩溃 |
 | 腹腔镜/内镜 HDMI 输入 | 分辨率、帧率、色彩和延迟可接受 |
